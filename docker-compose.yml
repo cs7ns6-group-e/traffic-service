@@ -1,0 +1,146 @@
+version: "3.9"
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - trafficbook
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - trafficbook
+
+  keycloak:
+    # NOTE: start-dev with KC_DB=dev-mem is for DEVELOPMENT ONLY.
+    # Production: use a real DB (postgres) and `start` command with proper TLS.
+    image: quay.io/keycloak/keycloak:23.0
+    command: start-dev
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: dev-mem
+    ports:
+      - "8080:8080"
+    networks:
+      - trafficbook
+
+  journey_booking:
+    build:
+      context: .
+      dockerfile: journey_booking/Dockerfile
+    ports:
+      - "8001:8001"
+    env_file: .env
+    environment:
+      APP_NAME: journey_booking
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - trafficbook
+    restart: unless-stopped
+
+  conflict_detection:
+    build:
+      context: .
+      dockerfile: conflict_detection/Dockerfile
+    ports:
+      - "8002:8002"
+    env_file: .env
+    environment:
+      APP_NAME: conflict_detection
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - trafficbook
+    restart: unless-stopped
+
+  notification:
+    build:
+      context: .
+      dockerfile: notification/Dockerfile
+    ports:
+      - "8003:8003"
+    env_file: .env
+    environment:
+      APP_NAME: notification
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - trafficbook
+    restart: unless-stopped
+
+  road_routing:
+    build:
+      context: .
+      dockerfile: road_routing/Dockerfile
+    ports:
+      - "8004:8004"
+    env_file: .env
+    environment:
+      APP_NAME: road_routing
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - trafficbook
+    restart: unless-stopped
+
+  traffic_authority:
+    build:
+      context: .
+      dockerfile: traffic_authority/Dockerfile
+    ports:
+      - "8005:8005"
+    env_file: .env
+    environment:
+      APP_NAME: traffic_authority
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - trafficbook
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - journey_booking
+      - conflict_detection
+      - notification
+      - road_routing
+      - traffic_authority
+    networks:
+      - trafficbook
+    restart: unless-stopped
+
+networks:
+  trafficbook:
+    driver: bridge

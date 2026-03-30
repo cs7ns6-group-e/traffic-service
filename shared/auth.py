@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 from fastapi import Depends, Header
 from jose import JWTError, jwt
+from jose.backends import RSAKey
 from pydantic import BaseModel
 
 from shared.config import get_settings
@@ -56,7 +57,6 @@ async def get_public_key(token_header: dict[str, Any]) -> Any:
     kid = token_header.get("kid")
     for key in jwks.get("keys", []):
         if key.get("kid") == kid:
-            from jose.backends import RSAKey
             return RSAKey(key, algorithm="RS256")
     raise UnauthorizedException("Public key not found for token kid")
 

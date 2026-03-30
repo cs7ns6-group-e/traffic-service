@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     @classmethod
     def validate_db_url(cls, v: str) -> str:
         if not v.startswith("postgresql"):
-            raise ValueError("DATABASE_URL must be a PostgreSQL URL")
+            raise ValueError("DATABASE_URL must be a PostgreSQL URL (postgresql:// or postgresql+asyncpg://)")
         return v
 
 

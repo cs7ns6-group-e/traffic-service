@@ -25,7 +25,7 @@ class ConflictService:
 
     def _build_key(self, origin: str, dest: str, start_time: str) -> str:
         raw = f"{origin}:{dest}:{start_time}"
-        return hashlib.md5(raw.encode()).hexdigest()  # noqa: S324
+        return hashlib.sha256(raw.encode()).hexdigest()
 
     async def check(self, request: ConflictCheckRequest, region: str) -> ConflictCheckResponse:
         key = self._build_key(request.origin, request.dest, request.start_time)
@@ -57,9 +57,9 @@ class ConflictService:
             self._cache.release_lock(key)
             return result
 
-        result = ConflictCheckResponse(conflict=False)
-        self._cache.set(f"conflict:{key}", json.dumps(result.model_dump()), self.CONFLICT_CACHE_TTL)
-        return result
+        # Do NOT cache conflict=False — the lock itself acts as the ghost reservation.
+        # Subsequent callers will fail to acquire the lock and get conflict=True.
+        return ConflictCheckResponse(conflict=False)
 
     async def register_cross_region(
         self, origin: str, dest: str, start_time: str, from_region: str

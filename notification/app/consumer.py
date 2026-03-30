@@ -25,11 +25,7 @@ class BookingEventConsumer:
         try:
             event: BookingEvent = json.loads(body.decode())
             logger.info("Received booking event: %s", event.get("journey_id"))
-            loop = asyncio.new_event_loop()
-            try:
-                loop.run_until_complete(self._service.send(event))
-            finally:
-                loop.close()
+            asyncio.run(self._service.send(event))
             logger.info("Notification sent for journey %s", event.get("journey_id"))
         except Exception as exc:
             logger.error("Failed to process booking event: %s", exc)

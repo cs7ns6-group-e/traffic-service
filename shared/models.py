@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from sqlalchemy import JSON
@@ -18,10 +18,10 @@ class Journey(Base):
     end_time: Mapped[datetime | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(default="PENDING")
     region: Mapped[str]
-    route_segments: Mapped[dict] = mapped_column(JSON, default=list)
+    route_segments: Mapped[dict] = mapped_column(JSON, default=lambda: [])
     is_cross_region: Mapped[bool] = mapped_column(default=False)
     dest_region: Mapped[str | None] = mapped_column(nullable=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
 
 class RoadClosure(Base):
@@ -33,4 +33,4 @@ class RoadClosure(Base):
     reason: Mapped[str | None] = mapped_column(nullable=True)
     active: Mapped[bool] = mapped_column(default=True)
     created_by: Mapped[str]
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))

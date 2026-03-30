@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, field_validator
@@ -21,7 +21,12 @@ class JourneyCreate(BaseModel):
     @field_validator("start_time")
     @classmethod
     def must_be_future(cls, v: datetime) -> datetime:
-        if v <= datetime.utcnow():
+        now = datetime.now(timezone.utc)
+        # Normalize to UTC-aware for comparison
+        if v.tzinfo is None:
+            from datetime import timezone as tz
+            v = v.replace(tzinfo=tz.utc)
+        if v <= now:
             raise ValueError("start_time must be in the future")
         return v
 

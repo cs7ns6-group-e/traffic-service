@@ -32,7 +32,7 @@ class CacheClient:
         """Atomic SETNX — returns True if lock acquired."""
         lock_key = self.make_key("lock", key)
         result = self._client.set(lock_key, "1", nx=True, ex=ttl)
-        return result is True
+        return bool(result)
 
     def release_lock(self, key: str) -> None:
         lock_key = self.make_key("lock", key)

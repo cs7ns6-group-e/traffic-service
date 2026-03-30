@@ -2,11 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY requirements.txt .
+COPY road_routing/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ../shared /app/shared
-COPY app /app/app
+COPY shared /app/shared
+COPY road_routing/app /app/app
 
 ENV PYTHONPATH=/app
 
