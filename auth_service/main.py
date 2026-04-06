@@ -227,7 +227,8 @@ def refresh(req: RefreshRequest, db: Session = Depends(get_db)):
     rt = db.query(RefreshToken).filter(RefreshToken.token == req.refresh_token).first()
     if not rt:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
-    if rt.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+    expires_at = rt.expires_at if rt.expires_at.tzinfo else rt.expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
         db.delete(rt)
         db.commit()
         raise HTTPException(status_code=401, detail="Refresh token expired")
@@ -266,5 +267,5 @@ def health():
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         return {"status": "healthy", "service": "auth_service"}
-    except Exception as e:
-        return {"status": "unhealthy", "service": "auth_service", "error": str(e)}
+    except Exception:
+        return {"status": "unhealthy", "service": "auth_service", "error": "Database connection failed"}

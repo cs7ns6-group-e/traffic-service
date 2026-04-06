@@ -89,7 +89,7 @@ def require_role(*roles: str):
     Raises 403 on insufficient role."""
 
     async def role_checker(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-        if current_user.role not in roles:
+        if not any(current_user.has_role(r) for r in roles):
             raise ForbiddenException(
                 f"Required role(s): {', '.join(roles)}. User role: {current_user.role}"
             )

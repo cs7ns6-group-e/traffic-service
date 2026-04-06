@@ -144,8 +144,8 @@ def admin_stats(user: dict = Depends(require_admin_or_authority), db: Session = 
         by_hour = [{"hour": str(row[0]), "count": row[1]} for row in hourly_rows]
 
         return {"by_status": by_status, "by_hour": by_hour, "region": REGION}
-    except Exception as e:
-        return {"error": str(e), "region": REGION}
+    except Exception:
+        return {"error": "Failed to fetch journey stats", "region": REGION}
 
 
 @app.get("/admin/queue")
@@ -169,8 +169,8 @@ def admin_queue(user: dict = Depends(require_admin_or_authority)):
 
         connection.close()
         return {"queues": queues_info, "status": "connected"}
-    except Exception as e:
-        return {"queues": {}, "status": "error", "error": str(e)}
+    except Exception:
+        return {"queues": {}, "status": "error", "error": "Failed to connect to RabbitMQ"}
 
 
 @app.get("/admin/cache")
@@ -191,12 +191,10 @@ def admin_cache(user: dict = Depends(require_admin_or_authority)):
             "keyspace_misses": misses,
             "used_memory_human": info.get("used_memory_human", "N/A"),
             "connected_clients": info.get("connected_clients", 0),
-            "total_keys": sum(
-                db_info.get("keys", 0) for key, db_info in info.items() if key.startswith("db")
-            ),
+            "total_keys": r.dbsize(),
         }
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception:
+        return {"error": "Failed to fetch Redis cache stats"}
 
 
 @app.get("/admin/all-regions")
@@ -261,5 +259,5 @@ def admin_emergency(user: dict = Depends(require_admin_or_authority), db: Sessio
             for row in rows
         ]
         return {"active_emergency_journeys": journeys, "count": len(journeys)}
-    except Exception as e:
-        return {"active_emergency_journeys": [], "count": 0, "error": str(e)}
+    except Exception:
+        return {"active_emergency_journeys": [], "count": 0, "error": "Failed to fetch emergency journeys"}
