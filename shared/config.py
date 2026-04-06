@@ -13,10 +13,11 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://redis:6379"
 
-    # Keycloak
-    keycloak_url: str = "http://keycloak:8080"
-    keycloak_realm: str = "traffic-service"
-    keycloak_client_id: str = "traffic-app"
+    # JWT
+    jwt_secret: str = "changeme"
+    jwt_algorithm: str = "HS256"
+    jwt_expiry_hours: int = 24
+    jwt_refresh_expiry_days: int = 7
 
     # Region
     region: str = "EU"

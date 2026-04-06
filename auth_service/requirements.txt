@@ -1,0 +1,7 @@
+fastapi
+uvicorn
+pyjwt
+bcrypt
+sqlalchemy
+psycopg2-binary
+pydantic-settings
