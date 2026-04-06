@@ -23,6 +23,11 @@ jobs:
             git pull origin main
             docker compose up --build -d
             sleep 10
+            docker run --rm \
+              -v ~/traffic-service:/app \
+              -w /app node:20-alpine \
+              sh -c "npm ci && npm run build"
+            docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
             docker compose ps
 
@@ -45,6 +50,11 @@ jobs:
             git pull origin main
             docker compose up --build -d
             sleep 10
+            docker run --rm \
+              -v ~/traffic-service:/app \
+              -w /app node:20-alpine \
+              sh -c "npm ci && npm run build"
+            docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
             docker compose ps
 
@@ -67,5 +77,10 @@ jobs:
             git pull origin main
             docker compose up --build -d
             sleep 10
+            docker run --rm \
+              -v ~/traffic-service:/app \
+              -w /app node:20-alpine \
+              sh -c "npm ci && npm run build"
+            docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
             docker compose ps
