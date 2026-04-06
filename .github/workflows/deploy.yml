@@ -15,29 +15,37 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key:      ${{ secrets.VM_SSH_KEY }}
           script: |
+            if [ ! -d ~/traffic-service ]; then
+              git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service
+            fi
             cd ~/traffic-service
-            git remote set-url origin \
-              https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
+            git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
             git pull origin main
             docker compose up --build -d
+            sleep 10
+            docker compose restart nginx
             docker compose ps
 
   deploy-us:
     runs-on: ubuntu-latest
     needs: deploy-eu
     steps:
-      - name: Deploy to US (S.Carolina)
+      - name: Deploy to US (Iowa)
         uses: appleboy/ssh-action@master
         with:
           host:     ${{ secrets.US_VM_HOST }}
           username: ${{ secrets.VM_USER }}
           key:      ${{ secrets.VM_SSH_KEY }}
           script: |
+            if [ ! -d ~/traffic-service ]; then
+              git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service
+            fi
             cd ~/traffic-service
-            git remote set-url origin \
-              https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
+            git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
             git pull origin main
             docker compose up --build -d
+            sleep 10
+            docker compose restart nginx
             docker compose ps
 
   deploy-apac:
@@ -51,9 +59,13 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key:      ${{ secrets.VM_SSH_KEY }}
           script: |
+            if [ ! -d ~/traffic-service ]; then
+              git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service
+            fi
             cd ~/traffic-service
-            git remote set-url origin \
-              https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
+            git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
             git pull origin main
             docker compose up --build -d
+            sleep 10
+            docker compose restart nginx
             docker compose ps
