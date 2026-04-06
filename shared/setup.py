@@ -9,7 +9,7 @@ setup(
         "pydantic>=2.6.0",
         "pydantic-settings>=2.2.0",
         "sqlalchemy[asyncio]>=2.0.0",
-        "python-jose[cryptography]>=3.3.0",
+        "pyjwt>=2.8.0",
         "httpx>=0.27.0",
         "redis>=5.0.0",
         "pika>=1.3.2",
