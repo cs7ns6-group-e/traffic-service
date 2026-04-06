@@ -1,0 +1,181 @@
+version: '3.8'
+
+services:
+
+  postgres:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB:       ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    restart: always
+    environment:
+      RABBITMQ_ERLANG_COOKIE: ${RABBITMQ_ERLANG_COOKIE}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+      - "25672:25672"
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: always
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards
+    depends_on: [prometheus]
+
+  nginx:
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - auth_service
+      - journey_booking
+      - conflict_detection
+      - notification
+      - road_routing
+      - traffic_authority
+      - admin_service
+
+  auth_service:
+    build: ./auth_service
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET:   ${JWT_SECRET}
+      REGION:       ${REGION}
+    depends_on: [postgres]
+
+  journey_booking:
+    build: ./journey_booking
+    restart: always
+    env_file: .env
+    environment:
+      DATABASE_URL:    ${DATABASE_URL}
+      RABBITMQ_URL:    ${RABBITMQ_URL}
+      CONFLICT_URL:    http://conflict_detection:8002
+      ROUTING_URL:     http://road_routing:8004
+      JWT_SECRET:      ${JWT_SECRET}
+      REGION:          ${REGION}
+      REGION_US_URL:   ${REGION_US_URL}
+      REGION_APAC_URL: ${REGION_APAC_URL}
+    ports:
+      - "8001:8001"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    deploy:
+      replicas: 2
+
+  conflict_detection:
+    build: ./conflict_detection
+    restart: always
+    ports:
+      - "8002:8002"
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL:    ${REDIS_URL}
+      JWT_SECRET:   ${JWT_SECRET}
+      REGION:       ${REGION}
+    depends_on: [redis, postgres]
+
+  notification:
+    build: ./notification
+    restart: always
+    ports:
+      - "8003:8003"
+    env_file: .env
+    environment:
+      RABBITMQ_URL:       ${RABBITMQ_URL}
+      SMTP_HOST:          ${SMTP_HOST}
+      SMTP_PORT:          ${SMTP_PORT}
+      SMTP_USER:          ${SMTP_USER}
+      SMTP_PASS:          ${SMTP_PASS}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID:   ${TELEGRAM_CHAT_ID}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+
+  road_routing:
+    build: ./road_routing
+    restart: always
+    ports:
+      - "8004:8004"
+    env_file: .env
+    environment:
+      REGION: ${REGION}
+
+  traffic_authority:
+    build: ./traffic_authority
+    restart: always
+    ports:
+      - "8005:8005"
+    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      JWT_SECRET:   ${JWT_SECRET}
+      REGION:       ${REGION}
+    depends_on: [postgres]
+
+  admin_service:
+    build: ./admin_service
+    restart: always
+    ports:
+      - "8006:8006"
+    env_file: .env
+    environment:
+      DATABASE_URL:    ${DATABASE_URL}
+      REDIS_URL:       ${REDIS_URL}
+      RABBITMQ_URL:    ${RABBITMQ_URL}
+      JWT_SECRET:      ${JWT_SECRET}
+      REGION:          ${REGION}
+      REGION_EU_URL:   http://10.0.1.11
+      REGION_US_URL:   http://10.0.2.11
+      REGION_APAC_URL: http://10.0.3.11
+    depends_on: [postgres, redis, rabbitmq]
+
+volumes:
+  postgres_data:
+  grafana_data:

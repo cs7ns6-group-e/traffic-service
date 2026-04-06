@@ -1,0 +1,53 @@
+name: Deploy TrafficBook — All Regions
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy-eu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to EU (Belgium)
+        uses: appleboy/ssh-action@master
+        with:
+          host:     ${{ secrets.EU_VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key:      ${{ secrets.VM_SSH_KEY }}
+          script: |
+            cd ~/traffic-service
+            git pull origin main
+            docker compose up --build -d
+            docker compose ps
+
+  deploy-us:
+    runs-on: ubuntu-latest
+    needs: deploy-eu
+    steps:
+      - name: Deploy to US (S.Carolina)
+        uses: appleboy/ssh-action@master
+        with:
+          host:     ${{ secrets.US_VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key:      ${{ secrets.VM_SSH_KEY }}
+          script: |
+            cd ~/traffic-service
+            git pull origin main
+            docker compose up --build -d
+            docker compose ps
+
+  deploy-apac:
+    runs-on: ubuntu-latest
+    needs: deploy-eu
+    steps:
+      - name: Deploy to APAC (Singapore)
+        uses: appleboy/ssh-action@master
+        with:
+          host:     ${{ secrets.APAC_VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key:      ${{ secrets.VM_SSH_KEY }}
+          script: |
+            cd ~/traffic-service
+            git pull origin main
+            docker compose up --build -d
+            docker compose ps
