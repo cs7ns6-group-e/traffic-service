@@ -16,6 +16,8 @@ jobs:
           key:      ${{ secrets.VM_SSH_KEY }}
           script: |
             cd ~/traffic-service
+            git remote set-url origin \
+              https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
             git pull origin main
             docker compose up --build -d
             docker compose ps
@@ -32,6 +34,8 @@ jobs:
           key:      ${{ secrets.VM_SSH_KEY }}
           script: |
             cd ~/traffic-service
+            git remote set-url origin \
+              https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
             git pull origin main
             docker compose up --build -d
             docker compose ps
@@ -48,6 +52,8 @@ jobs:
           key:      ${{ secrets.VM_SSH_KEY }}
           script: |
             cd ~/traffic-service
+            git remote set-url origin \
+              https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
             git pull origin main
             docker compose up --build -d
             docker compose ps
