@@ -49,3 +49,7 @@ logs/
 node_modules/
 dist/
 .next/
+node_modules/
+dist/
+*.pdf
+*.docx
