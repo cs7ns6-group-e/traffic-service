@@ -94,9 +94,13 @@ REGION_KEYWORDS = {
            "paris", "lyon", "amsterdam", "brussels", "uk", "france",
            "netherlands", "belgium", "europe"],
     "US": ["new york", "boston", "los angeles", "san francisco", "chicago",
-           "detroit", "usa", "america", "united states"],
+           "detroit", "usa", "america", "united states", "houston",
+           "canada", "toronto", "california", "texas", "florida",
+           "washington", "seattle", "miami", "denver", "atlanta"],
     "APAC": ["singapore", "kuala lumpur", "tokyo", "osaka", "sydney",
-              "melbourne", "japan", "australia", "malaysia", "asia"],
+              "melbourne", "japan", "australia", "malaysia", "asia",
+              "beijing", "china", "mumbai", "india", "seoul", "korea",
+              "bangkok", "thailand", "hong kong", "taipei", "taiwan"],
 }
 
 
@@ -230,7 +234,7 @@ async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
         try:
             dest_url = REGION_URL_MAP[dest_region]
             async with httpx.AsyncClient(timeout=5) as client:
-                await client.post(f"{dest_url}:8001/cross-region", json={
+                await client.post(f"{dest_url}:8001/journeys/cross-region", json={
                     "journey_id": journey_id,
                     "origin": req.origin,
                     "destination": req.destination,
@@ -266,7 +270,7 @@ async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
     }
 
 
-@app.post("/cross-region", status_code=201)
+@app.post("/journeys/cross-region", status_code=201)
 def cross_region(req: CrossRegionRequest):
     conn = get_conn()
     cur = conn.cursor()
