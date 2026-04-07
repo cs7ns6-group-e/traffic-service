@@ -16,8 +16,9 @@ jobs:
           key:             ${{ secrets.VM_SSH_KEY }}
           command_timeout: 30m
           script: |
-            cd ~/traffic-service || (git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service && cd ~/traffic-service)
-            git config pull.rebase false
+            cd ~/traffic-service || git clone \
+              https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git \
+              ~/traffic-service
             git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
             git fetch origin
             git reset --hard origin/main
@@ -31,9 +32,7 @@ jobs:
             docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
             sleep 5
-            docker compose ps
             curl -s http://localhost/health
-            curl -s http://localhost/ | head -3
 
   deploy-us:
     runs-on: ubuntu-latest
@@ -47,8 +46,9 @@ jobs:
           key:             ${{ secrets.VM_SSH_KEY }}
           command_timeout: 30m
           script: |
-            cd ~/traffic-service || (git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service && cd ~/traffic-service)
-            git config pull.rebase false
+            cd ~/traffic-service || git clone \
+              https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git \
+              ~/traffic-service
             git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
             git fetch origin
             git reset --hard origin/main
@@ -62,9 +62,7 @@ jobs:
             docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
             sleep 5
-            docker compose ps
             curl -s http://localhost/health
-            curl -s http://localhost/ | head -3
 
   deploy-apac:
     runs-on: ubuntu-latest
@@ -78,8 +76,9 @@ jobs:
           key:             ${{ secrets.VM_SSH_KEY }}
           command_timeout: 30m
           script: |
-            cd ~/traffic-service || (git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service && cd ~/traffic-service)
-            git config pull.rebase false
+            cd ~/traffic-service || git clone \
+              https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git \
+              ~/traffic-service
             git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
             git fetch origin
             git reset --hard origin/main
@@ -93,6 +92,4 @@ jobs:
             docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
             sleep 5
-            docker compose ps
             curl -s http://localhost/health
-            curl -s http://localhost/ | head -3
