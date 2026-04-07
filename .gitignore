@@ -4,3 +4,9 @@ __pycache__/
 *.pyo
 .DS_Store
 *.log
+
+# Frontend build artifacts
+node_modules/
+dist/
+.vite/
+*.local
