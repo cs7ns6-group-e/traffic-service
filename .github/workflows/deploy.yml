@@ -11,9 +11,10 @@ jobs:
       - name: Deploy to EU (Belgium)
         uses: appleboy/ssh-action@master
         with:
-          host:     ${{ secrets.EU_VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key:      ${{ secrets.VM_SSH_KEY }}
+          host:            ${{ secrets.EU_VM_HOST }}
+          username:        ${{ secrets.VM_USER }}
+          key:             ${{ secrets.VM_SSH_KEY }}
+          command_timeout: 30m
           script: |
             cd ~/traffic-service || (git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service && cd ~/traffic-service)
             git config pull.rebase false
@@ -41,9 +42,10 @@ jobs:
       - name: Deploy to US (Iowa)
         uses: appleboy/ssh-action@master
         with:
-          host:     ${{ secrets.US_VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key:      ${{ secrets.VM_SSH_KEY }}
+          host:            ${{ secrets.US_VM_HOST }}
+          username:        ${{ secrets.VM_USER }}
+          key:             ${{ secrets.VM_SSH_KEY }}
+          command_timeout: 30m
           script: |
             cd ~/traffic-service || (git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service && cd ~/traffic-service)
             git config pull.rebase false
@@ -71,9 +73,10 @@ jobs:
       - name: Deploy to APAC (Singapore)
         uses: appleboy/ssh-action@master
         with:
-          host:     ${{ secrets.APAC_VM_HOST }}
-          username: ${{ secrets.VM_USER }}
-          key:      ${{ secrets.VM_SSH_KEY }}
+          host:            ${{ secrets.APAC_VM_HOST }}
+          username:        ${{ secrets.VM_USER }}
+          key:             ${{ secrets.VM_SSH_KEY }}
+          command_timeout: 30m
           script: |
             cd ~/traffic-service || (git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service && cd ~/traffic-service)
             git config pull.rebase false
