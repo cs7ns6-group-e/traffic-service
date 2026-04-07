@@ -15,21 +15,24 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key:      ${{ secrets.VM_SSH_KEY }}
           script: |
-            if [ ! -d ~/traffic-service ]; then
-              git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service
-            fi
-            cd ~/traffic-service
+            cd ~/traffic-service || (git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service && cd ~/traffic-service)
+            git config pull.rebase false
             git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
-            git pull origin main
+            git fetch origin
+            git reset --hard origin/main
+            sed -i '/^version:/d' docker-compose.yml
             docker compose up --build -d
-            sleep 10
+            sleep 15
             docker run --rm \
               -v ~/traffic-service:/app \
               -w /app node:20-alpine \
               sh -c "npm ci && npm run build"
             docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
+            sleep 5
             docker compose ps
+            curl -s http://localhost/health
+            curl -s http://localhost/ | head -3
 
   deploy-us:
     runs-on: ubuntu-latest
@@ -42,21 +45,24 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key:      ${{ secrets.VM_SSH_KEY }}
           script: |
-            if [ ! -d ~/traffic-service ]; then
-              git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service
-            fi
-            cd ~/traffic-service
+            cd ~/traffic-service || (git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service && cd ~/traffic-service)
+            git config pull.rebase false
             git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
-            git pull origin main
+            git fetch origin
+            git reset --hard origin/main
+            sed -i '/^version:/d' docker-compose.yml
             docker compose up --build -d
-            sleep 10
+            sleep 15
             docker run --rm \
               -v ~/traffic-service:/app \
               -w /app node:20-alpine \
               sh -c "npm ci && npm run build"
             docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
+            sleep 5
             docker compose ps
+            curl -s http://localhost/health
+            curl -s http://localhost/ | head -3
 
   deploy-apac:
     runs-on: ubuntu-latest
@@ -69,18 +75,21 @@ jobs:
           username: ${{ secrets.VM_USER }}
           key:      ${{ secrets.VM_SSH_KEY }}
           script: |
-            if [ ! -d ~/traffic-service ]; then
-              git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service
-            fi
-            cd ~/traffic-service
+            cd ~/traffic-service || (git clone https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git ~/traffic-service && cd ~/traffic-service)
+            git config pull.rebase false
             git remote set-url origin https://${{ secrets.GH_PAT }}@github.com/cs7ns6-group-e/traffic-service.git
-            git pull origin main
+            git fetch origin
+            git reset --hard origin/main
+            sed -i '/^version:/d' docker-compose.yml
             docker compose up --build -d
-            sleep 10
+            sleep 15
             docker run --rm \
               -v ~/traffic-service:/app \
               -w /app node:20-alpine \
               sh -c "npm ci && npm run build"
             docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
+            sleep 5
             docker compose ps
+            curl -s http://localhost/health
+            curl -s http://localhost/ | head -3
