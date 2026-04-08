@@ -297,13 +297,21 @@ def get_road_segments(user=Depends(require_role("traffic_authority", "admin"))):
     conn = get_conn()
     cur = conn.cursor()
     try:
+        # Segments are stored as plain strings ["Naas Road", ...]
+        # in new journeys (via road_routing extract_segments), and as objects
+        # {"name":"...", "maneuver":"..."} in old journeys.
+        # COALESCE: try ->>'name' (objects), fall back to #>>'{}'  (strings).
         cur.execute("""
             SELECT DISTINCT
-                jsonb_array_elements(route_segments::jsonb)->>'name' AS segment
-            FROM journeys
+                COALESCE(
+                    elem->>'name',
+                    elem #>> '{}'
+                ) AS segment
+            FROM journeys,
+                 jsonb_array_elements(route_segments::jsonb) AS elem
             WHERE route_segments IS NOT NULL
-              AND route_segments != '[]'
-              AND route_segments != 'null'
+              AND route_segments::text != '[]'
+              AND route_segments::text != 'null'
               AND status IN ('CONFIRMED', 'PENDING')
               AND start_time > NOW()
             ORDER BY segment
