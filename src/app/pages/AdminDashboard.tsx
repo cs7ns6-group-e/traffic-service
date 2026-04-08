@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Plus, Minus, Activity, Database, Radio, RefreshCw } from "lucide-react";
 import { ServiceHealthIndicator } from "../components/ServiceHealthIndicator";
 import { RegionBadge } from "../components/RegionBadge";
@@ -72,6 +72,7 @@ function fmt(ts: Date) {
 }
 
 export default function AdminDashboard() {
+  const replicaOverridesRef = useRef<Record<string, number>>({});
   const [services, setServices] = useState<ServiceHealth[]>(DEFAULT_SERVICES);
   const [regions, setRegions] = useState<Record<string, RegionStats & { name: string }>>({
     EU:   { name: "EU",   status: "loading" },
@@ -110,23 +111,27 @@ export default function AdminDashboard() {
 
       if (Array.isArray(obj.services)) {
         setServices(
-          (obj.services as Array<Record<string, unknown>>).map((s, i) => ({
-            name: String(s.name ?? DEFAULT_SERVICES[i]?.name ?? "Service"),
-            status: (s.status === "healthy" || s.status === "ONLINE") ? "ONLINE" : "OFFLINE",
-            responseTime: Number(s.response_time_ms ?? s.responseTime ?? DEFAULT_SERVICES[i]?.responseTime ?? 0),
-            replicas: Number(s.replicas ?? DEFAULT_SERVICES[i]?.replicas ?? 1),
-            p95_ms: latencyMap[String(s.name).toLowerCase().replace(/\s+/g, "_")],
-          }))
+          (obj.services as Array<Record<string, unknown>>).map((s, i) => {
+            const name = String(s.name ?? DEFAULT_SERVICES[i]?.name ?? "Service");
+            return {
+              name,
+              status: (s.status === "healthy" || s.status === "ONLINE") ? "ONLINE" : "OFFLINE",
+              responseTime: Number(s.response_time_ms ?? s.responseTime ?? DEFAULT_SERVICES[i]?.responseTime ?? 0),
+              replicas: replicaOverridesRef.current[name] ?? Number(s.replicas ?? DEFAULT_SERVICES[i]?.replicas ?? 1),
+              p95_ms: latencyMap[String(s.name).toLowerCase().replace(/\s+/g, "_")],
+            };
+          })
         );
       } else {
         setServices(DEFAULT_SERVICES.map((svc) => {
           const key = svc.name.toLowerCase().replace(/\s+/g, "_");
           const entry = (obj[key] ?? obj[svc.name]) as Record<string, unknown> | undefined;
-          if (!entry) return svc;
+          if (!entry) return { ...svc, replicas: replicaOverridesRef.current[svc.name] ?? svc.replicas };
           return {
             ...svc,
             status: (entry.status === "healthy" || entry.status === "ONLINE") ? "ONLINE" as const : "OFFLINE" as const,
             responseTime: Number(entry.response_time_ms ?? entry.responseTime ?? svc.responseTime),
+            replicas: replicaOverridesRef.current[svc.name] ?? svc.replicas,
             p95_ms: latencyMap[key],
           };
         }));
@@ -251,9 +256,10 @@ export default function AdminDashboard() {
   }
 
   function handleScaleService(name: string, dir: "up" | "down") {
-    setServices(services.map(s => {
+    setServices(prev => prev.map(s => {
       if (s.name !== name) return s;
       const n = dir === "up" ? s.replicas + 1 : Math.max(1, s.replicas - 1);
+      replicaOverridesRef.current[name] = n;
       toast.success(`${name} scaled to ${n} replicas`);
       return { ...s, replicas: n };
     }));
@@ -320,30 +326,33 @@ export default function AdminDashboard() {
             <div className="space-y-4">
               {Object.entries(regions).map(([region, data]) => {
                 const unavailable = !data.available || data.status === "unavailable";
-                return (
-                  <div key={region} className={`p-4 rounded-lg border ${unavailable ? "bg-gray-50 border-gray-200 opacity-60" : "bg-white border-gray-200"}`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <RegionBadge region={region as "EU" | "US" | "APAC"} />
-                        {unavailable && <span className="text-xs text-gray-400">(unavailable)</span>}
-                      </div>
-                      <div className={`w-3 h-3 rounded-full ${unavailable ? "bg-gray-400" : data.status === "healthy" ? "bg-green-500" : "bg-red-500"}`} />
+                if (unavailable) {
+                  return (
+                    <div key={region} className="flex items-center justify-between px-1 py-1.5">
+                      <RegionBadge region={region as "EU" | "US" | "APAC"} />
+                      <span className="text-xs text-gray-400">unavailable</span>
                     </div>
-                    {!unavailable && (
-                      <div className="grid grid-cols-4 gap-2 text-center mt-2">
-                        {([
-                          ["Total", data.total ?? data.active_journeys ?? 0],
-                          ["Confirmed", data.confirmed ?? 0],
-                          ["Pending", data.pending ?? 0],
-                          ["Emergency", data.emergency ?? 0],
-                        ] as [string, number][]).map(([label, value]) => (
-                          <div key={label}>
-                            <p className="text-lg font-bold text-gray-900">{value}</p>
-                            <p className="text-xs text-gray-500">{label}</p>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                  );
+                }
+                return (
+                  <div key={region} className="p-4 rounded-lg border bg-white border-gray-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <RegionBadge region={region as "EU" | "US" | "APAC"} />
+                      <div className={`w-3 h-3 rounded-full ${data.status === "healthy" ? "bg-green-500" : "bg-red-500"}`} />
+                    </div>
+                    <div className="grid grid-cols-4 gap-2 text-center mt-2">
+                      {([
+                        ["Total", data.total ?? data.active_journeys ?? 0],
+                        ["Confirmed", data.confirmed ?? 0],
+                        ["Pending", data.pending ?? 0],
+                        ["Emergency", data.emergency ?? 0],
+                      ] as [string, number][]).map(([label, value]) => (
+                        <div key={label}>
+                          <p className="text-lg font-bold text-gray-900">{value}</p>
+                          <p className="text-xs text-gray-500">{label}</p>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 );
               })}
