@@ -13,6 +13,9 @@ import { useAuth } from "../context/AuthContext";
 import { apiGet, apiDelete } from "../api/client";
 import { ENDPOINTS } from "../api/config";
 
+type RouteSegment = string | { name: string; maneuver?: string; distance_m?: number; duration_s?: number };
+function segName(s: RouteSegment): string { return typeof s === "string" ? s : (s.name ?? ""); }
+
 interface ApiJourney {
   id: string;
   driver_id: string;
@@ -24,14 +27,14 @@ interface ApiJourney {
   dest_region?: "EU" | "US" | "APAC";
   is_cross_region?: boolean;
   vehicle_type?: "STANDARD" | "EMERGENCY" | "AUTHORITY";
-  route_segments?: string[];
+  route_segments?: RouteSegment[];
   distance_km?: number;
   duration_mins?: number;
 }
 
 function formatDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleString("en-GB", {
+    return new Date(iso).toLocaleString("en-IE", {
       weekday: "short", day: "numeric", month: "short", year: "numeric",
       hour: "2-digit", minute: "2-digit",
     });
@@ -57,24 +60,20 @@ export default function DriverDashboard() {
   const isEmergency = user?.vehicle_type === "EMERGENCY";
 
   function fetchJourneys() {
-    if (!user?.email) { setLoading(false); return; }
     setLoading(true);
     setError(null);
-    apiGet<ApiJourney[] | { journeys: ApiJourney[] }>(`${ENDPOINTS.JOURNEYS}?driver_id=${encodeURIComponent(user.email)}`)
+    apiGet<ApiJourney[] | { journeys: ApiJourney[] }>(ENDPOINTS.JOURNEYS)
       .then((data) => {
-        console.log("[DriverDashboard] raw response:", data);
         const list = Array.isArray(data) ? data : ((data as { journeys?: ApiJourney[] }).journeys ?? []);
-        console.log("[DriverDashboard] parsed journeys:", list.length, list);
         setJourneys(list);
       })
       .catch((err) => {
-        console.error("[DriverDashboard] fetch error:", err);
         setError(err instanceof Error ? err.message : "Failed to load journeys. Please try again.");
       })
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { fetchJourneys(); }, [user?.email]);
+  useEffect(() => { fetchJourneys(); }, []);
 
   const stats = {
     total: journeys.length,
@@ -189,7 +188,17 @@ export default function DriverDashboard() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
-            {journeys.length === 0 ? "No journeys yet. Book your first journey!" : "No journeys match your search."}
+            {journeys.length === 0 ? (
+              <span>
+                No journeys yet.{" "}
+                <button
+                  onClick={() => navigate("/driver/book-journey")}
+                  className="text-[#2563EB] underline hover:text-[#1d4ed8] font-medium"
+                >
+                  Book your first journey! →
+                </button>
+              </span>
+            ) : "No journeys match your search."}
           </div>
         ) : (
           <div className="space-y-4">
@@ -216,14 +225,18 @@ export default function DriverDashboard() {
                     {(journey.distance_km || journey.duration_mins) && (
                       <p className="text-xs text-gray-500 mt-1">
                         {journey.distance_km ? `${journey.distance_km} km` : ""}
-                        {journey.distance_km && journey.duration_mins ? " · " : ""}
-                        {journey.duration_mins ? `${journey.duration_mins} min` : ""}
+                        {journey.distance_km && journey.duration_mins ? " • " : ""}
+                        {journey.duration_mins
+                          ? journey.duration_mins >= 60
+                            ? `${Math.floor(journey.duration_mins / 60)}h ${journey.duration_mins % 60}min`
+                            : `${journey.duration_mins} min`
+                          : ""}
                       </p>
                     )}
                     {journey.route_segments && journey.route_segments.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
                         {journey.route_segments.slice(0, 3).map((seg, i) => (
-                          <RoadSegmentChip key={i} roadName={seg} />
+                          <RoadSegmentChip key={i} roadName={segName(seg)} />
                         ))}
                         {journey.route_segments.length > 3 && (
                           <span className="text-xs text-gray-400 self-center">+{journey.route_segments.length - 3}</span>

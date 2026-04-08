@@ -3,6 +3,8 @@ import { cn } from "./ui/utils";
 export interface TimeSlot {
   slot: string;
   available: boolean;
+  reason?: string;       // "" | "booked" | "being_selected"
+  held_by_you?: boolean;
 }
 
 interface SlotGridProps {
@@ -26,25 +28,44 @@ export function SlotGrid({ slots, selectedSlot, onSelect, forceAllAvailable = fa
 
   return (
     <div className="grid grid-cols-4 gap-2">
-      {slots.map(({ slot, available }) => {
-        const isAvailable = forceAllAvailable || available;
+      {slots.map((s) => {
+        const { slot, available, reason = "", held_by_you = false } = s;
         const isSelected = selectedSlot === slot;
+        const isBeingSelected = reason === "being_selected" && !held_by_you;
+        const isTaken = reason === "booked";
+        const isClickable = forceAllAvailable || held_by_you || (available && !isBeingSelected && !isTaken);
+
+        let label = slot;
+        if (held_by_you || isSelected) label = `${slot} ✓`;
+        else if (isBeingSelected) label = `${slot} •`;
+        else if (isTaken) label = `${slot} ✕`;
+
+        let btnClass: string;
+        if (held_by_you || isSelected) {
+          btnClass = "border-[#2563EB] bg-[#2563EB] text-white hover:bg-[#1d4ed8]";
+        } else if (isBeingSelected) {
+          btnClass = "border-gray-300 bg-gray-100 text-gray-400 cursor-not-allowed";
+        } else if (isTaken) {
+          btnClass = "border-gray-400 bg-gray-300 text-gray-500 cursor-not-allowed";
+        } else if (forceAllAvailable || available) {
+          btnClass = "border-green-300 bg-green-50 text-green-700 hover:border-green-500 hover:bg-green-100";
+        } else {
+          btnClass = "border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed";
+        }
+
         return (
           <button
             key={slot}
             type="button"
-            disabled={!isAvailable}
-            onClick={() => isAvailable && onSelect(slot)}
+            disabled={!isClickable}
+            onClick={() => isClickable && onSelect(slot)}
+            title={isBeingSelected ? "Another user is selecting this slot" : undefined}
             className={cn(
-              "h-10 rounded-lg text-sm font-medium transition-all border-2",
-              isSelected
-                ? "border-[#2563EB] bg-blue-50 text-[#2563EB]"
-                : isAvailable
-                ? "border-green-200 bg-green-50 text-green-700 hover:border-green-400 hover:bg-green-100"
-                : "border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed"
+              "h-10 rounded-lg text-xs font-medium transition-all border-2",
+              btnClass
             )}
           >
-            {slot}
+            {label}
           </button>
         );
       })}

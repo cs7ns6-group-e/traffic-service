@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router";
 import { Calendar, AlertTriangle, Route as RouteIcon, Zap, CheckCircle2 } from "lucide-react";
 import { Button } from "../components/ui/button";
@@ -26,8 +26,14 @@ interface FamousRoute {
   duration_mins: number;
 }
 
+type RouteSegment = string | { name: string; maneuver?: string; distance_m?: number; duration_s?: number };
+
+function segName(s: RouteSegment): string {
+  return typeof s === "string" ? s : (s.name ?? "");
+}
+
 interface RouteData {
-  segments: string[];
+  segments: RouteSegment[];
   distance_km: number;
   duration_mins: number;
   coordinates: [number, number][];
@@ -72,6 +78,7 @@ export default function BookJourney() {
   const [date, setDate] = useState(tomorrow());
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsRefreshing, setSlotsRefreshing] = useState(false);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
   const [routeData, setRouteData] = useState<RouteData | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
@@ -83,50 +90,138 @@ export default function BookJourney() {
 
   const isEmergency = user?.vehicle_type === "EMERGENCY";
 
-  // Fetch famous routes on mount
-  useEffect(() => {
-    apiGet<FamousRoute[]>(ENDPOINTS.FAMOUS_ROUTES).then(setFamousRoutes).catch(() => {});
-  }, []);
+  // Track active ghost reservation so cleanup effect can release it
+  const activeReservation = useRef<{ slot: string; origin: string; dest: string } | null>(null);
 
-  // Fetch slots when origin + destination + date all set
-  const fetchSlots = useCallback(() => {
-    if (!originPlace || !destinationPlace || !date) return;
-    setSlotsLoading(true);
-    apiGet<TimeSlot[]>(
-      `${ENDPOINTS.CONFLICTS_SLOTS}?origin=${encodeURIComponent(originPlace.name)}&destination=${encodeURIComponent(destinationPlace.name)}&date=${date}`
-    )
+  // ── Ghost reservation helpers ──────────────────────────────────────────
+  function releaseReservation(slot: string, origin: string, dest: string) {
+    if (!user?.email) return;
+    apiPost("/conflicts/release-slot", {
+      origin,
+      destination: dest,
+      slot,
+      driver_id: user.email,
+    }).catch(() => {});
+  }
+
+  function reserveSlot(slot: string, origin: string, dest: string) {
+    if (!user?.email) return;
+    apiPost("/conflicts/reserve-slot", {
+      origin,
+      destination: dest,
+      slot,
+      driver_id: user.email,
+    }).catch(() => {});
+  }
+
+  // Release on unmount (captures email at mount — user won't change mid-session)
+  const userEmailRef = useRef(user?.email);
+  useEffect(() => { userEmailRef.current = user?.email; }, [user?.email]);
+
+  useEffect(() => {
+    return () => {
+      const r = activeReservation.current;
+      const email = userEmailRef.current;
+      if (r && email) {
+        apiPost("/conflicts/release-slot", {
+          origin: r.origin,
+          destination: r.dest,
+          slot: r.slot,
+          driver_id: email,
+        }).catch(() => {});
+      }
+    };
+  }, []); // runs only on unmount
+
+  // ── Slot selection with ghost reservation ─────────────────────────────
+  function handleSlotSelect(newSlot: string) {
+    // Release previous reservation
+    if (activeReservation.current) {
+      releaseReservation(
+        activeReservation.current.slot,
+        activeReservation.current.origin,
+        activeReservation.current.dest
+      );
+      activeReservation.current = null;
+    }
+
+    setSelectedSlot(newSlot);
+
+    // Reserve new slot
+    if (originPlace && destinationPlace) {
+      reserveSlot(newSlot, originPlace.name, destinationPlace.name);
+      activeReservation.current = {
+        slot: newSlot,
+        origin: originPlace.name,
+        dest: destinationPlace.name,
+      };
+    }
+  }
+
+  // ── Release reservation when route parameters change ──────────────────
+  useEffect(() => {
+    if (activeReservation.current && user?.email) {
+      releaseReservation(
+        activeReservation.current.slot,
+        activeReservation.current.origin,
+        activeReservation.current.dest
+      );
+      activeReservation.current = null;
+    }
+    setSelectedSlot(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [originPlace?.name, destinationPlace?.name, date]);
+
+  // ── Fetch slots ────────────────────────────────────────────────────────
+  const fetchSlots = useCallback((isRefresh = false) => {
+    if (!originPlace || !destinationPlace || !date || !user?.email) return;
+    if (isRefresh) setSlotsRefreshing(true);
+    else setSlotsLoading(true);
+
+    const url =
+      `${ENDPOINTS.CONFLICTS_SLOTS}?` +
+      `origin=${encodeURIComponent(originPlace.name)}&` +
+      `destination=${encodeURIComponent(destinationPlace.name)}&` +
+      `date=${date}&` +
+      `driver_id=${encodeURIComponent(user.email)}&` +
+      `vehicle_type=${user.vehicle_type ?? "STANDARD"}`;
+
+    apiGet<TimeSlot[]>(url)
       .then(setSlots)
       .catch(() => {
-        // Fall back to all slots available
-        const fallback: TimeSlot[] = [];
-        for (let h = 6; h <= 22; h++) {
-          for (const m of [0, 30]) {
-            if (h === 22 && m === 30) break;
-            fallback.push({ slot: `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`, available: true });
+        if (!isRefresh) {
+          // Fallback to all-available grid on initial load only
+          const fallback: TimeSlot[] = [];
+          for (let h = 6; h <= 22; h++) {
+            for (const m of [0, 30]) {
+              if (h === 22 && m === 30) break;
+              fallback.push({
+                slot: `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`,
+                available: true,
+              });
+            }
           }
+          setSlots(fallback);
         }
-        setSlots(fallback);
       })
-      .finally(() => setSlotsLoading(false));
-  }, [originPlace, destinationPlace, date]);
+      .finally(() => {
+        setSlotsLoading(false);
+        setSlotsRefreshing(false);
+      });
+  }, [originPlace, destinationPlace, date, user?.email, user?.vehicle_type]);
 
+  // Initial fetch + 30s auto-refresh (does NOT reset selectedSlot)
   useEffect(() => {
-    if (originPlace && destinationPlace && date) {
-      setSelectedSlot(null);
-      fetchSlots();
-    } else {
+    if (!originPlace || !destinationPlace || !date) {
       setSlots([]);
+      return;
     }
-  }, [originPlace, destinationPlace, date, fetchSlots]);
-
-  // Auto-refresh slots every 30s
-  useEffect(() => {
-    if (!originPlace || !destinationPlace || !date) return;
-    const id = setInterval(fetchSlots, 30000);
+    fetchSlots(false);
+    const id = setInterval(() => fetchSlots(true), 30000);
     return () => clearInterval(id);
-  }, [originPlace, destinationPlace, date, fetchSlots]);
+  }, [fetchSlots]);
 
-  // Fetch route when origin + destination set
+  // ── Route map ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!originPlace || !destinationPlace) { setRouteData(null); return; }
     setRouteLoading(true);
@@ -136,6 +231,11 @@ export default function BookJourney() {
       .finally(() => setRouteLoading(false));
   }, [originPlace, destinationPlace]);
 
+  // Fetch famous routes on mount
+  useEffect(() => {
+    apiGet<FamousRoute[]>(ENDPOINTS.FAMOUS_ROUTES).then(setFamousRoutes).catch(() => {});
+  }, []);
+
   const originRegion = originPlace ? detectRegion(originPlace.name) : null;
   const destinationRegion = destinationPlace ? detectRegion(destinationPlace.name) : null;
   const isCrossRegion = originRegion && destinationRegion && originRegion !== destinationRegion;
@@ -143,7 +243,7 @@ export default function BookJourney() {
   function handleRouteCardClick(route: FamousRoute) {
     setOriginPlace({ name: route.origin, lat: 0, lon: 0 });
     setDestinationPlace({ name: route.destination, lat: 0, lon: 0 });
-    setSelectedSlot(null);
+    // selectedSlot reset + reservation release handled by the route-change effect
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -159,6 +259,8 @@ export default function BookJourney() {
         destination: destinationPlace.name,
         start_time,
       });
+      // Clear reservation tracking — slot is now confirmed
+      activeReservation.current = null;
       setSuccessModal(result);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Booking failed";
@@ -244,7 +346,7 @@ export default function BookJourney() {
             <Label className="text-xs">Origin</Label>
             <PlaceSearch
               value={originPlace}
-              onChange={(p) => { setOriginPlace(p); setSelectedSlot(null); }}
+              onChange={(p) => setOriginPlace(p)}
               placeholder="Enter starting location"
               pinColor="green"
             />
@@ -261,7 +363,7 @@ export default function BookJourney() {
             <Label className="text-xs">Destination</Label>
             <PlaceSearch
               value={destinationPlace}
-              onChange={(p) => { setDestinationPlace(p); setSelectedSlot(null); }}
+              onChange={(p) => setDestinationPlace(p)}
               placeholder="Enter destination"
               pinColor="red"
             />
@@ -293,7 +395,7 @@ export default function BookJourney() {
                 id="date"
                 type="date"
                 value={date}
-                onChange={(e) => { setDate(e.target.value); setSelectedSlot(null); }}
+                onChange={(e) => setDate(e.target.value)}
                 className="pl-10 h-10"
                 required
                 min={new Date().toISOString().split("T")[0]}
@@ -352,7 +454,7 @@ export default function BookJourney() {
                 {routeData.segments.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {routeData.segments.slice(0, 6).map((seg, i) => (
-                      <RoadSegmentChip key={i} roadName={seg} />
+                      <RoadSegmentChip key={i} roadName={segName(seg)} />
                     ))}
                     {routeData.segments.length > 6 && (
                       <span className="text-xs text-gray-500 self-center">+{routeData.segments.length - 6} more</span>
@@ -371,16 +473,32 @@ export default function BookJourney() {
           <div className="bg-white rounded-lg border border-gray-200 p-4">
             <div className="flex items-center justify-between mb-3">
               <Label className="text-sm font-semibold text-gray-900">Select Time Slot</Label>
-              {selectedSlot && (
-                <span className="text-sm font-medium text-[#2563EB]">✓ {selectedSlot}</span>
-              )}
+              <div className="flex items-center gap-2">
+                {slotsRefreshing && <span className="text-xs text-gray-400">Refreshing…</span>}
+                {selectedSlot && <span className="text-sm font-medium text-[#2563EB]">✓ {selectedSlot}</span>}
+              </div>
             </div>
+
             {!originPlace || !destinationPlace || !date ? (
               <p className="text-sm text-gray-400 text-center py-6">Complete origin, destination &amp; date to see available slots</p>
             ) : slotsLoading ? (
               <SlotGrid slots={[]} selectedSlot={null} onSelect={() => {}} loading />
             ) : slots.length > 0 ? (
-              <SlotGrid slots={slots} selectedSlot={selectedSlot} onSelect={setSelectedSlot} forceAllAvailable={isEmergency} />
+              <>
+                <SlotGrid
+                  slots={slots}
+                  selectedSlot={selectedSlot}
+                  onSelect={handleSlotSelect}
+                  forceAllAvailable={isEmergency}
+                />
+                {/* Legend */}
+                <div className="flex flex-wrap gap-3 mt-3 text-xs text-gray-500">
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-green-200 inline-block" /> Available</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-[#2563EB] inline-block" /> Your selection</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-gray-200 inline-block" /> Being selected</span>
+                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-gray-400 inline-block" /> Taken</span>
+                </div>
+              </>
             ) : (
               <p className="text-sm text-gray-500 text-center py-4">No slots available</p>
             )}
@@ -404,7 +522,7 @@ export default function BookJourney() {
                 <span className="font-medium">{successModal.destination}</span>
               </p>
               <p className="text-sm text-gray-600">
-                {new Date(successModal.start_time).toLocaleString("en-GB", {
+                {new Date(successModal.start_time).toLocaleString("en-IE", {
                   weekday: "short", day: "numeric", month: "short", year: "numeric",
                   hour: "2-digit", minute: "2-digit",
                 })}
@@ -438,13 +556,9 @@ export default function BookJourney() {
           </div>
           <div>
             <h2 className="text-xl font-bold text-gray-900">Slot Already Booked</h2>
-            <p className="text-sm text-gray-600 mt-2">You already have a journey at this time</p>
+            <p className="text-sm text-gray-600 mt-2">This slot was taken before you could confirm</p>
           </div>
-          <Button
-            onClick={() => setConflictModal(false)}
-            variant="outline"
-            className="w-full"
-          >
+          <Button onClick={() => setConflictModal(false)} variant="outline" className="w-full">
             Choose a Different Slot
           </Button>
         </div>
