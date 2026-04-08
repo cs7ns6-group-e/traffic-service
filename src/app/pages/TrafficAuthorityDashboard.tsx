@@ -112,7 +112,7 @@ export default function TrafficAuthorityDashboard() {
   useEffect(() => {
     fetchAll();
     apiGet<string[]>(ENDPOINTS.AUTHORITY_SEGMENTS)
-      .then(setAvailableSegments)
+      .then((data) => setAvailableSegments(Array.isArray(data) ? data : []))
       .catch(() => {});
   }, []);
 
@@ -120,7 +120,8 @@ export default function TrafficAuthorityDashboard() {
     setLoadingJourneys(true);
     apiGet<AuthorityJourney[]>(ENDPOINTS.AUTHORITY_JOURNEYS)
       .then((data) => {
-        const sorted = [...data].sort((a, b) => {
+        const list = Array.isArray(data) ? data : [];
+        const sorted = [...list].sort((a, b) => {
           const ae = a.vehicle_type === "EMERGENCY" || a.status === "EMERGENCY_CONFIRMED" ? 0 : 1;
           const be = b.vehicle_type === "EMERGENCY" || b.status === "EMERGENCY_CONFIRMED" ? 0 : 1;
           return ae - be;
@@ -130,7 +131,7 @@ export default function TrafficAuthorityDashboard() {
       .catch(() => {})
       .finally(() => setLoadingJourneys(false));
 
-    apiGet<Closure[]>(ENDPOINTS.AUTHORITY_CLOSURES).then(setClosures).catch(() => {});
+    apiGet<Closure[]>(ENDPOINTS.AUTHORITY_CLOSURES).then((data) => setClosures(Array.isArray(data) ? data : [])).catch(() => {});
     apiGet<AuthorityStats>(ENDPOINTS.AUTHORITY_STATS).then(setStats).catch(() => {});
   }
 
