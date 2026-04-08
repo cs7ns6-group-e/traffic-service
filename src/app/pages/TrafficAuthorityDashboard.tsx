@@ -57,7 +57,7 @@ interface ClosurePreview {
 interface ClosureResult {
   closure_id: string;
   road_name: string;
-  affected_journeys: number;
+  affected_journeys: number | AffectedJourney[];
   emergency_skipped: number;
   cancelled_journey_ids?: string[];
 }
@@ -120,10 +120,13 @@ export default function TrafficAuthorityDashboard() {
 
   function fetchAll() {
     setLoadingJourneys(true);
-    apiGet<AuthorityJourney[]>(ENDPOINTS.AUTHORITY_JOURNEYS)
+    apiGet<unknown>(ENDPOINTS.AUTHORITY_JOURNEYS)
       .then((data) => {
-        const list = Array.isArray(data) ? data : [];
-        const sorted = [...list].sort((a, b) => {
+        const obj = data as Record<string, unknown>;
+        const raw: AuthorityJourney[] =
+          Array.isArray(obj?.journeys) ? (obj.journeys as AuthorityJourney[]) :
+          Array.isArray(data) ? (data as AuthorityJourney[]) : [];
+        const sorted = [...raw].sort((a, b) => {
           const ae = a.vehicle_type === "EMERGENCY" || a.status === "EMERGENCY_CONFIRMED" ? 0 : 1;
           const be = b.vehicle_type === "EMERGENCY" || b.status === "EMERGENCY_CONFIRMED" ? 0 : 1;
           return ae - be;
@@ -133,7 +136,16 @@ export default function TrafficAuthorityDashboard() {
       .catch(() => {})
       .finally(() => setLoadingJourneys(false));
 
-    apiGet<Closure[]>(ENDPOINTS.AUTHORITY_CLOSURES).then((data) => setClosures(Array.isArray(data) ? data : [])).catch(() => {});
+    apiGet<unknown>(ENDPOINTS.AUTHORITY_CLOSURES)
+      .then((data) => {
+        const obj = data as Record<string, unknown>;
+        setClosures(
+          Array.isArray(obj?.closures) ? (obj.closures as Closure[]) :
+          Array.isArray(obj?.road_closures) ? (obj.road_closures as Closure[]) :
+          Array.isArray(data) ? (data as Closure[]) : []
+        );
+      })
+      .catch(() => {});
     apiGet<AuthorityStats>(ENDPOINTS.AUTHORITY_STATS).then(setStats).catch(() => {});
   }
 
@@ -533,7 +545,11 @@ export default function TrafficAuthorityDashboard() {
             <div className="space-y-2 text-sm">
               <div className="flex justify-between py-2 border-b">
                 <span className="text-gray-600">Journeys cancelled</span>
-                <span className="font-bold text-gray-900">{closureResult.affected_journeys}</span>
+                <span className="font-bold text-gray-900">
+                  {Array.isArray(closureResult.affected_journeys)
+                    ? closureResult.affected_journeys.length
+                    : closureResult.affected_journeys}
+                </span>
               </div>
               <div className="flex justify-between py-2 border-b">
                 <span className="text-gray-600">Emergency vehicles skipped</span>
