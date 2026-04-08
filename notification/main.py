@@ -310,9 +310,17 @@ async def consume():
             force_cancel_q = await channel.declare_queue(
                 "journey_force_cancelled_events", durable=True
             )
+            # Named fanout exchange — federation policy on this exchange
+            # causes all 3 regions to receive every booking/cancel event.
+            replication_exchange = await channel.declare_exchange(
+                "journey_replication",
+                aio_pika.ExchangeType.FANOUT,
+                durable=True,
+            )
             replication_q = await channel.declare_queue(
                 "journey_replication_events", durable=True
             )
+            await replication_q.bind(replication_exchange)
 
             async def on_booking(msg: aio_pika.IncomingMessage):
                 async with msg.process(requeue=True):
