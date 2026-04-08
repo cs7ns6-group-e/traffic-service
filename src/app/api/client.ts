@@ -52,14 +52,29 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
 
   if (!res.ok) {
     let message = `HTTP ${res.status}`;
+    let rawBody: Record<string, unknown> | null = null;
     try {
       const text = await res.text();
       if (text) {
-        try { message = JSON.parse(text)?.detail ?? JSON.parse(text)?.message ?? text; }
-        catch { message = text; }
+        try {
+          rawBody = JSON.parse(text) as Record<string, unknown>;
+          const detail = rawBody.detail;
+          if (typeof detail === "string") {
+            message = detail;
+          } else if (typeof detail === "object" && detail !== null) {
+            message = (detail as Record<string, unknown>).message as string ?? JSON.stringify(detail);
+          } else if (typeof rawBody.message === "string") {
+            message = rawBody.message;
+          } else {
+            message = text;
+          }
+        } catch { message = text; }
       }
     } catch { /* ignore */ }
-    throw new Error(message);
+    const apiErr = new Error(message) as Error & { body: unknown; statusCode: number };
+    apiErr.body = rawBody;
+    apiErr.statusCode = res.status;
+    throw apiErr;
   }
 
   // 204 No Content

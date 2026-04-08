@@ -85,6 +85,7 @@ export default function BookJourney() {
   const [submitting, setSubmitting] = useState(false);
   const [successModal, setSuccessModal] = useState<BookingResult | null>(null);
   const [conflictModal, setConflictModal] = useState(false);
+  const [routeBlockedModal, setRouteBlockedModal] = useState<{ road: string; reason: string } | null>(null);
   const [famousRoutes, setFamousRoutes] = useState<FamousRoute[]>([]);
   const [activeTab, setActiveTab] = useState<"EU" | "US" | "APAC">("EU");
 
@@ -264,7 +265,15 @@ export default function BookJourney() {
       setSuccessModal(result);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Booking failed";
-      if (msg.includes("409") || msg.toLowerCase().includes("conflict") || msg.toLowerCase().includes("already")) {
+      const body = (err as { body?: Record<string, unknown> }).body;
+      const detail = body?.detail as Record<string, unknown> | undefined;
+      const errorCode = detail?.error ?? body?.error;
+
+      if (errorCode === "route_blocked") {
+        const road = (detail?.road_name ?? body?.road_name ?? "Unknown road") as string;
+        const reason = (detail?.reason ?? body?.reason ?? msg) as string;
+        setRouteBlockedModal({ road, reason });
+      } else if ((err as { statusCode?: number }).statusCode === 409 || msg.toLowerCase().includes("conflict") || msg.toLowerCase().includes("already")) {
         setConflictModal(true);
       } else {
         toast.error("Booking failed", { description: msg });
@@ -562,6 +571,35 @@ export default function BookJourney() {
             Choose a Different Slot
           </Button>
         </div>
+      </Modal>
+
+      {/* Route Blocked Modal */}
+      <Modal isOpen={!!routeBlockedModal} onClose={() => setRouteBlockedModal(null)}>
+        {routeBlockedModal && (
+          <div className="text-center space-y-4">
+            <div className="w-16 h-16 bg-amber-100 rounded-full flex items-center justify-center mx-auto">
+              <AlertTriangle className="w-8 h-8 text-amber-600" />
+            </div>
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">Route Blocked ⚠️</h2>
+              <p className="text-sm text-gray-600 mt-2">This route passes through a closed road.</p>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-left space-y-2">
+              <div>
+                <span className="text-xs font-medium text-amber-700 uppercase">Road</span>
+                <p className="text-sm font-semibold text-gray-900 mt-0.5">{routeBlockedModal.road}</p>
+              </div>
+              <div>
+                <span className="text-xs font-medium text-amber-700 uppercase">Reason</span>
+                <p className="text-sm text-gray-700 mt-0.5">{routeBlockedModal.reason}</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-500">Please choose an alternative route or wait until the road reopens.</p>
+            <Button onClick={() => setRouteBlockedModal(null)} className="w-full bg-[#2563EB] hover:bg-[#1d4ed8]">
+              Choose Different Route
+            </Button>
+          </div>
+        )}
       </Modal>
     </div>
   );

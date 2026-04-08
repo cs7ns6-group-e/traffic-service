@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { MapPin, XCircle, Plus, Search, Filter, AlertCircle, Radio, Lock } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { MapPin, XCircle, Plus, Search, Filter, AlertCircle, Radio, Lock, Eye } from "lucide-react";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { RegionBadge } from "../components/RegionBadge";
@@ -37,6 +37,13 @@ interface Closure {
   affected_journeys?: number;
 }
 
+interface ClosurePreview {
+  road_name: string;
+  affected_journeys: number;
+  emergency_skipped: number;
+  affected_routes?: Array<string | { origin: string; destination: string }>;
+}
+
 interface ClosureResult {
   closure_id: string;
   road_name: string;
@@ -52,18 +59,31 @@ interface AuthorityStats {
   cross_region?: number;
 }
 
-const ROADS_BY_REGION: Record<"EU" | "US" | "APAC", string[]> = {
-  EU:   ["N7", "M50", "N11", "N4", "N8", "N25", "M1", "M7", "N9", "A5", "M20", "N22", "N6", "N3", "M11"],
-  US:   ["I-95", "I-5", "I-10", "I-90", "I-80", "I-405", "I-66", "US-101", "I-285", "I-75", "I-35", "I-70"],
-  APAC: ["AYE", "PIE", "KJE", "BKE", "SLE", "CTE", "ECP", "TPE", "MCE", "Pan-Island Expressway"],
-};
+function routeLabel(r: string | { origin: string; destination: string }): string {
+  return typeof r === "string" ? r : `${r.origin} → ${r.destination}`;
+}
 
 export default function TrafficAuthorityDashboard() {
   const [selectedRegion, setSelectedRegion] = useState<"EU" | "US" | "APAC">("EU");
   const [isClosureModalOpen, setIsClosureModalOpen] = useState(false);
   const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
-  const [closureData, setClosureData] = useState({ roadName: "", region: "EU" as "EU" | "US" | "APAC", reason: "", cancelAffected: false });
-  const [useCustomRoad, setUseCustomRoad] = useState(false);
+  const [closureData, setClosureData] = useState({
+    roadName: "",
+    region: "EU" as "EU" | "US" | "APAC",
+    reason: "",
+    cancelAffected: false,
+  });
+
+  // Segments combobox state
+  const [availableSegments, setAvailableSegments] = useState<string[]>([]);
+  const [segmentSearch, setSegmentSearch] = useState("");
+  const [showSegmentDropdown, setShowSegmentDropdown] = useState(false);
+  const comboboxRef = useRef<HTMLDivElement>(null);
+
+  // Preview state
+  const [closurePreview, setClosurePreview] = useState<ClosurePreview | null>(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Confirmed" | "Pending" | "Cancelled">("All");
 
@@ -74,12 +94,27 @@ export default function TrafficAuthorityDashboard() {
   const [submittingClosure, setSubmittingClosure] = useState(false);
   const [closureResult, setClosureResult] = useState<ClosureResult | null>(null);
 
-  // Cancel modal state
   const [cancelTarget, setCancelTarget] = useState<AuthorityJourney | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelling, setCancelling] = useState(false);
 
-  useEffect(() => { fetchAll(); }, []);
+  // Close segment dropdown on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (comboboxRef.current && !comboboxRef.current.contains(e.target as Node)) {
+        setShowSegmentDropdown(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  useEffect(() => {
+    fetchAll();
+    apiGet<string[]>(ENDPOINTS.AUTHORITY_SEGMENTS)
+      .then(setAvailableSegments)
+      .catch(() => {});
+  }, []);
 
   function fetchAll() {
     setLoadingJourneys(true);
@@ -126,6 +161,11 @@ export default function TrafficAuthorityDashboard() {
     cancelled: journeys.filter(j => j.region === r && (j.status === "CANCELLED" || j.status === "AUTHORITY_CANCELLED")).length,
   }));
 
+  // Filtered segments for combobox
+  const filteredSegments = availableSegments
+    .filter(s => s.toLowerCase().includes(segmentSearch.toLowerCase()))
+    .slice(0, 20);
+
   async function handleForceCancel() {
     if (!cancelTarget || !cancelReason.trim()) { toast.error("Please enter a reason"); return; }
     setCancelling(true);
@@ -142,8 +182,25 @@ export default function TrafficAuthorityDashboard() {
     }
   }
 
-  async function handleCreateClosure() {
-    if (!closureData.roadName || !closureData.reason) { toast.error("Please fill in all fields"); return; }
+  async function handlePreviewClosure() {
+    if (!closureData.roadName || !closureData.reason) {
+      toast.error("Enter a road name and reason first");
+      return;
+    }
+    setLoadingPreview(true);
+    try {
+      const preview = await apiGet<ClosurePreview>(
+        ENDPOINTS.AUTHORITY_CLOSURE_PREVIEW(closureData.roadName)
+      );
+      setClosurePreview(preview);
+    } catch (err: unknown) {
+      toast.error("Preview failed", { description: err instanceof Error ? err.message : "Unknown" });
+    } finally {
+      setLoadingPreview(false);
+    }
+  }
+
+  async function handleConfirmClosure() {
     setSubmittingClosure(true);
     try {
       const result = await apiPost<ClosureResult>(ENDPOINTS.AUTHORITY_CLOSURE, {
@@ -151,16 +208,25 @@ export default function TrafficAuthorityDashboard() {
         reason: closureData.reason,
         region: closureData.region,
       });
+      setClosurePreview(null);
       setIsClosureModalOpen(false);
       setClosureData({ roadName: "", region: "EU", reason: "", cancelAffected: false });
-      setUseCustomRoad(false);
+      setSegmentSearch("");
       setClosureResult(result);
       fetchAll();
     } catch (err: unknown) {
-      toast.error("Failed", { description: err instanceof Error ? err.message : "Unknown" });
+      toast.error("Closure failed", { description: err instanceof Error ? err.message : "Unknown" });
     } finally {
       setSubmittingClosure(false);
     }
+  }
+
+  function resetClosureModal() {
+    setIsClosureModalOpen(false);
+    setClosureData({ roadName: "", region: "EU", reason: "", cancelAffected: false });
+    setSegmentSearch("");
+    setShowSegmentDropdown(false);
+    setClosurePreview(null);
   }
 
   function formatTime(t: string) {
@@ -261,7 +327,6 @@ export default function TrafficAuthorityDashboard() {
           </div>
         </div>
 
-        {/* Status filter */}
         <div className="flex gap-2 mb-4">
           {(["All", "Confirmed", "Pending", "Cancelled"] as const).map(f => (
             <button
@@ -338,19 +403,18 @@ export default function TrafficAuthorityDashboard() {
         )}
       </div>
 
-      {/* Create Closure Dialog */}
-      <Dialog open={isClosureModalOpen} onOpenChange={setIsClosureModalOpen}>
+      {/* ── Create Closure Dialog ──────────────────────────────────────── */}
+      <Dialog open={isClosureModalOpen} onOpenChange={(open) => { if (!open) resetClosureModal(); }}>
         <DialogContent>
           <DialogHeader><DialogTitle>Create Road Closure</DialogTitle></DialogHeader>
           <div className="space-y-4 py-4">
+
+            {/* Region */}
             <div className="space-y-2">
               <Label>Region</Label>
               <Select
                 value={closureData.region}
-                onValueChange={(v: "EU" | "US" | "APAC") => {
-                  setClosureData({ ...closureData, region: v, roadName: "" });
-                  setUseCustomRoad(false);
-                }}
+                onValueChange={(v: "EU" | "US" | "APAC") => setClosureData({ ...closureData, region: v, roadName: "" })}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -360,76 +424,161 @@ export default function TrafficAuthorityDashboard() {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Road Name — searchable combobox + Preview */}
             <div className="space-y-2">
               <Label>Road Name</Label>
-              <Select
-                value={useCustomRoad ? "__other__" : (closureData.roadName || "")}
-                onValueChange={(v) => {
-                  if (v === "__other__") {
-                    setUseCustomRoad(true);
-                    setClosureData({ ...closureData, roadName: "" });
-                  } else {
-                    setUseCustomRoad(false);
-                    setClosureData({ ...closureData, roadName: v });
-                  }
-                }}
-              >
-                <SelectTrigger><SelectValue placeholder="Select a road…" /></SelectTrigger>
-                <SelectContent>
-                  {ROADS_BY_REGION[closureData.region].map(road => (
-                    <SelectItem key={road} value={road}>{road}</SelectItem>
-                  ))}
-                  <SelectItem value="__other__">Other (custom)</SelectItem>
-                </SelectContent>
-              </Select>
-              {useCustomRoad && (
-                <Input
-                  placeholder="Enter custom road name…"
-                  value={closureData.roadName}
-                  onChange={(e) => setClosureData({ ...closureData, roadName: e.target.value })}
-                  className="mt-2"
-                />
-              )}
+              <div className="flex gap-2">
+                <div className="relative flex-1" ref={comboboxRef}>
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                  <Input
+                    placeholder="Search road segments…"
+                    value={segmentSearch}
+                    onChange={(e) => {
+                      setSegmentSearch(e.target.value);
+                      setClosureData(d => ({ ...d, roadName: e.target.value }));
+                      setShowSegmentDropdown(true);
+                    }}
+                    onFocus={() => setShowSegmentDropdown(true)}
+                    className="pl-9"
+                  />
+                  {showSegmentDropdown && filteredSegments.length > 0 && (
+                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-44 overflow-y-auto">
+                      {filteredSegments.map(seg => (
+                        <button
+                          key={seg}
+                          type="button"
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors"
+                          onMouseDown={(e) => e.preventDefault()} // prevent blur
+                          onClick={() => {
+                            setSegmentSearch(seg);
+                            setClosureData(d => ({ ...d, roadName: seg }));
+                            setShowSegmentDropdown(false);
+                          }}
+                        >
+                          {seg}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-1.5 flex-shrink-0"
+                  disabled={!closureData.roadName || !closureData.reason || loadingPreview}
+                  onClick={handlePreviewClosure}
+                >
+                  <Eye className="w-4 h-4" />
+                  {loadingPreview ? "Loading…" : "Preview"}
+                </Button>
+              </div>
             </div>
+
+            {/* Reason */}
             <div className="space-y-2">
               <Label>Reason</Label>
-              <Textarea placeholder="Describe reason for closure..." value={closureData.reason} onChange={(e) => setClosureData({ ...closureData, reason: e.target.value })} />
+              <Textarea
+                placeholder="Describe reason for closure..."
+                value={closureData.reason}
+                onChange={(e) => setClosureData(d => ({ ...d, reason: e.target.value }))}
+              />
             </div>
+
             <div className="flex items-center space-x-2">
-              <Checkbox id="cancel-affected" checked={closureData.cancelAffected} onCheckedChange={(c) => setClosureData({ ...closureData, cancelAffected: c as boolean })} />
+              <Checkbox
+                id="cancel-affected"
+                checked={closureData.cancelAffected}
+                onCheckedChange={(c) => setClosureData(d => ({ ...d, cancelAffected: c as boolean }))}
+              />
               <label htmlFor="cancel-affected" className="text-sm text-gray-700">Cancel all affected journeys</label>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsClosureModalOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreateClosure} disabled={submittingClosure} className="bg-[#2563EB] hover:bg-[#1d4ed8]">
-              {submittingClosure ? "Creating…" : "Create Closure"}
+            <Button variant="outline" onClick={resetClosureModal}>Cancel</Button>
+            <Button
+              onClick={handlePreviewClosure}
+              disabled={!closureData.roadName || !closureData.reason || loadingPreview}
+              className="bg-[#2563EB] hover:bg-[#1d4ed8]"
+            >
+              {loadingPreview ? "Loading preview…" : "Preview & Create"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Closure Result Modal */}
+      {/* ── Closure Preview Modal ──────────────────────────────────────── */}
+      <Modal isOpen={!!closurePreview} onClose={() => setClosurePreview(null)} title="Closure Preview">
+        {closurePreview && (
+          <div className="space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <p className="font-semibold text-amber-900">
+                Closing <span className="font-bold">{closurePreview.road_name}</span> will cancel:
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4 text-center">
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-2xl font-bold text-gray-900">{closurePreview.affected_journeys}</p>
+                <p className="text-xs text-gray-500 mt-1">Journeys affected</p>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <p className="text-2xl font-bold text-red-600">{closurePreview.emergency_skipped}</p>
+                <p className="text-xs text-gray-500 mt-1">Emergency vehicles skipped</p>
+              </div>
+            </div>
+
+            {closurePreview.affected_routes && closurePreview.affected_routes.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-gray-500 uppercase mb-2">Affected Routes</p>
+                <div className="space-y-1 max-h-32 overflow-y-auto bg-gray-50 rounded-lg p-3">
+                  {closurePreview.affected_routes.map((r, i) => (
+                    <p key={i} className="text-sm text-gray-700">• {routeLabel(r)}</p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <Button variant="outline" onClick={() => setClosurePreview(null)} className="flex-1">
+                Cancel
+              </Button>
+              <Button
+                onClick={handleConfirmClosure}
+                disabled={submittingClosure}
+                className="flex-1 bg-red-600 hover:bg-red-700"
+              >
+                {submittingClosure ? "Creating…" : "Confirm Closure"}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      {/* ── Closure Result Modal ───────────────────────────────────────── */}
       <Modal isOpen={!!closureResult} onClose={() => setClosureResult(null)} title="Road Closure Created">
         {closureResult && (
           <div className="space-y-4">
             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-              <p className="font-semibold text-green-900">{closureResult.road_name}</p>
+              <p className="font-semibold text-green-900">Road closed: {closureResult.road_name}</p>
             </div>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div className="bg-gray-50 rounded-lg p-3 text-center">
-                <p className="text-2xl font-bold text-gray-900">{closureResult.affected_journeys}</p>
-                <p className="text-gray-500 mt-1">Journeys cancelled</p>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between py-2 border-b">
+                <span className="text-gray-600">Journeys cancelled</span>
+                <span className="font-bold text-gray-900">{closureResult.affected_journeys}</span>
               </div>
-              <div className="bg-gray-50 rounded-lg p-3 text-center">
-                <p className="text-2xl font-bold text-red-600">{closureResult.emergency_skipped}</p>
-                <p className="text-gray-500 mt-1">Emergency skipped</p>
+              <div className="flex justify-between py-2 border-b">
+                <span className="text-gray-600">Emergency vehicles skipped</span>
+                <span className="font-bold text-red-600">{closureResult.emergency_skipped}</span>
               </div>
+            </div>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-800">
+              📱 Telegram notifications sent to all affected drivers
             </div>
             {closureResult.cancelled_journey_ids && closureResult.cancelled_journey_ids.length > 0 && (
               <div>
                 <p className="text-xs font-medium text-gray-500 uppercase mb-2">Cancelled Journey IDs</p>
-                <div className="space-y-1 max-h-32 overflow-y-auto">
+                <div className="space-y-1 max-h-28 overflow-y-auto bg-gray-50 rounded p-2">
                   {closureResult.cancelled_journey_ids.map(id => (
                     <p key={id} className="text-xs font-mono text-gray-600">{id}</p>
                   ))}
@@ -441,12 +590,13 @@ export default function TrafficAuthorityDashboard() {
         )}
       </Modal>
 
-      {/* Force Cancel Modal */}
+      {/* ── Force Cancel Modal ─────────────────────────────────────────── */}
       <Modal isOpen={!!cancelTarget} onClose={() => setCancelTarget(null)} title="Force Cancel Journey">
         {cancelTarget && (
           <div className="space-y-4">
             <p className="text-sm text-gray-700">
-              Cancel <span className="font-mono">#{cancelTarget.id.slice(0, 8)}</span>: {cancelTarget.origin} → {cancelTarget.destination}
+              Cancel <span className="font-mono">#{cancelTarget.id.slice(0, 8)}</span>:{" "}
+              {cancelTarget.origin} → {cancelTarget.destination}
             </p>
             <div className="space-y-2">
               <Label>Reason (required)</Label>
@@ -467,7 +617,7 @@ export default function TrafficAuthorityDashboard() {
         )}
       </Modal>
 
-      {/* Broadcast Dialog */}
+      {/* ── Broadcast Dialog ───────────────────────────────────────────── */}
       <Dialog open={isBroadcastModalOpen} onOpenChange={setIsBroadcastModalOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Broadcast Alert</DialogTitle></DialogHeader>
@@ -482,7 +632,9 @@ export default function TrafficAuthorityDashboard() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsBroadcastModalOpen(false)}>Cancel</Button>
-            <Button onClick={() => { toast.success("Broadcast sent"); setIsBroadcastModalOpen(false); }} className="bg-[#2563EB] hover:bg-[#1d4ed8]">Send Broadcast</Button>
+            <Button onClick={() => { toast.success("Broadcast sent"); setIsBroadcastModalOpen(false); }} className="bg-[#2563EB] hover:bg-[#1d4ed8]">
+              Send Broadcast
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

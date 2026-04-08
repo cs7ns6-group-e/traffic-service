@@ -19,11 +19,13 @@ export const ENDPOINTS = {
   ROUTE:         "/route",
   FAMOUS_ROUTES: "/routes/famous",
 
-  AUTHORITY_JOURNEYS: "/authority/journeys",
-  AUTHORITY_CANCEL:   (id: string) => `/authority/cancel/${id}`,
-  AUTHORITY_CLOSURE:  "/authority/closure",
-  AUTHORITY_CLOSURES: "/authority/closures",
-  AUTHORITY_STATS:    "/authority/stats",
+  AUTHORITY_JOURNEYS:        "/authority/journeys",
+  AUTHORITY_CANCEL:          (id: string) => `/authority/cancel/${id}`,
+  AUTHORITY_CLOSURE:         "/authority/closure",
+  AUTHORITY_CLOSURES:        "/authority/closures",
+  AUTHORITY_STATS:           "/authority/stats",
+  AUTHORITY_SEGMENTS:        "/authority/segments",
+  AUTHORITY_CLOSURE_PREVIEW: (road: string) => `/authority/closure-preview?road_name=${encodeURIComponent(road)}`,
 
   ADMIN_HEALTH:      "/admin/health",
   ADMIN_STATS:       "/admin/stats",
