@@ -42,6 +42,8 @@ def init_db():
         );
         ALTER TABLE journeys ADD COLUMN IF NOT EXISTS cancelled_reason TEXT;
         ALTER TABLE journeys ADD COLUMN IF NOT EXISTS driver_email TEXT;
+        ALTER TABLE road_closures ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+        UPDATE road_closures SET is_active = active WHERE is_active IS NULL;
     """)
     conn.commit()
     cur.close()
@@ -247,8 +249,7 @@ async def create_closure(
         "WHERE route_segments::text ILIKE %s "
         "AND status IN ('CONFIRMED', 'PENDING') "
         "AND start_time > NOW() "
-        "AND status != 'EMERGENCY_CONFIRMED' "
-        "RETURNING id, driver_id, origin, destination",
+        "RETURNING id, driver_id, driver_email, origin, destination, start_time",
         (f"Road closure: {req.road_name} — {req.reason}", f"%{req.road_name}%"),
     )
     cancelled_rows = cur.fetchall()
@@ -257,28 +258,26 @@ async def create_closure(
     conn.close()
 
     cancelled_ids = [str(r[0]) for r in cancelled_rows]
+    authority_email = user.get("email", "authority")
 
-    # Publish road closure event (one summary event)
-    await publish_event("road_closure_events", {
-        "closure_id": closure_id,
-        "road_name": req.road_name,
-        "reason": req.reason,
-        "region": req.region,
-        "cancelled_journey_ids": cancelled_ids,
-        "affected_count": len(cancelled_ids),
-    })
-
-    # Publish individual force-cancel events for each affected journey
+    # Publish one road_closure_events per cancelled journey with full driver detail
     for r in cancelled_rows:
-        await publish_event("journey_force_cancelled_events", {
-            "event_type": "journey_force_cancelled",
-            "journey_id": str(r[0]),
-            "driver_id": r[1],
-            "origin": r[2],
-            "destination": r[3],
-            "reason": f"Road closure: {req.road_name} — {req.reason}",
-            "cancelled_by": user.get("email", "authority"),
-            "region": REGION,
+        j_id, j_driver_id, j_driver_email, j_origin, j_destination, j_start_time = r
+        j_driver_email = j_driver_email or ""
+        await publish_event("road_closure_events", {
+            "event_type": "road_closure",
+            "journey_id": str(j_id),
+            "driver_id": str(j_driver_id),
+            "driver_email": j_driver_email,
+            "driver_name": j_driver_email or "Driver",
+            "origin": j_origin,
+            "destination": j_destination,
+            "start_time": str(j_start_time) if j_start_time else "",
+            "road_name": req.road_name,
+            "closure_reason": req.reason,
+            "reason": req.reason,
+            "region": req.region,
+            "cancelled_by": authority_email,
         })
 
     return {
@@ -288,6 +287,83 @@ async def create_closure(
         "cancelled_journey_ids": cancelled_ids,
         "emergency_skipped": emergency_skipped,
     }
+
+
+@app.get("/authority/segments")
+def get_road_segments(user=Depends(require_role("traffic_authority", "admin"))):
+    """Return unique OSRM road segment names from active future journeys.
+    Used by frontend as a dropdown so authority picks a real name that will match.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT DISTINCT
+                jsonb_array_elements(route_segments::jsonb)->>'name' AS segment
+            FROM journeys
+            WHERE route_segments IS NOT NULL
+              AND route_segments != '[]'
+              AND route_segments != 'null'
+              AND status IN ('CONFIRMED', 'PENDING')
+              AND start_time > NOW()
+            ORDER BY segment
+        """)
+        rows = cur.fetchall()
+        segments = [r[0] for r in rows if r[0] and r[0].strip()]
+        return {
+            "segments": segments,
+            "count": len(segments),
+            "note": "Exact OSRM road names from active future journeys",
+        }
+    except Exception as e:
+        return {"segments": [], "error": str(e)}
+    finally:
+        cur.close()
+        conn.close()
+
+
+@app.get("/authority/closure-preview")
+def preview_closure(
+    road_name: str,
+    user=Depends(require_role("traffic_authority", "admin")),
+):
+    """Show which journeys would be cancelled before actually creating a closure."""
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT id, origin, destination, start_time,
+                   vehicle_type, status, driver_email
+            FROM journeys
+            WHERE route_segments::text ILIKE %s
+              AND status IN ('CONFIRMED', 'PENDING', 'EMERGENCY_CONFIRMED')
+              AND start_time > NOW()
+        """, (f"%{road_name}%",))
+        rows = cur.fetchall()
+        journeys = []
+        emergency_count = 0
+        for r in rows:
+            if r[4] == "EMERGENCY" or r[5] == "EMERGENCY_CONFIRMED":
+                emergency_count += 1
+                continue
+            journeys.append({
+                "id": str(r[0])[:8],
+                "origin": r[1],
+                "destination": r[2],
+                "start_time": str(r[3]),
+                "vehicle_type": r[4],
+                "status": r[5],
+                "driver_email": r[6] or "",
+            })
+        return {
+            "road_name": road_name,
+            "will_cancel": len(journeys),
+            "emergency_skipped": emergency_count,
+            "affected_journeys": journeys[:10],
+        }
+    finally:
+        cur.close()
+        conn.close()
 
 
 @app.get("/authority/closures")

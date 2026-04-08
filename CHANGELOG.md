@@ -115,3 +115,34 @@ curl http://35.240.110.205/admin/replicated -H "Authorization: Bearer $ADMIN_TOK
 curl http://34.10.45.241/admin/replicated -H "Authorization: Bearer $ADMIN_TOKEN"
 curl http://34.126.131.195/admin/replicated -H "Authorization: Bearer $ADMIN_TOKEN"
 All should show journeys replicated from other regions after cross-region booking
+
+## [2026-04-08] — fix/road-closure-system
+
+### What changed
+- Added GET /authority/segments — returns exact OSRM segment names from
+  active future journeys; frontend can offer these as a dropdown so authority
+  always picks a name that will actually match journeys
+- Added GET /authority/closure-preview — shows exactly which journeys would
+  be cancelled before creating a closure (dry-run safety check)
+- Added closure check in journey_booking before booking is saved: 409 if
+  any route segment matches an active closure; EMERGENCY vehicles bypass
+- Fixed closure cascade UPDATE to RETURN driver_email and start_time so
+  road_closure_events now contain full per-journey driver detail
+- Changed closure cascade to publish one road_closure_events per cancelled
+  journey (not one summary), each with driver_name, driver_email, start_time
+- Fixed notification handler to read closure_reason key (with reason fallback)
+  and show cancelled_by in Telegram message
+- Added is_active column to road_closures (mirrors active); cleared all 11
+  stale test closures on EU VM
+
+### Why
+- OSRM uses street names not road numbers (N7, M50) so N7 closure hit 0
+  journeys — authority needs to pick from real segment names
+- Parnell Street closure hit 26 journeys because it appears in every
+  Dublin departure; preview endpoint prevents accidental mass cancellation
+- Pre-booking check prevents new bookings on already-closed roads
+
+### Files modified
+- traffic_authority/main.py
+- journey_booking/main.py
+- notification/main.py

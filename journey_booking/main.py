@@ -174,6 +174,45 @@ def verify_token(authorization: str = Header(...)) -> dict:
         raise HTTPException(401, "Invalid token")
 
 
+async def check_road_closures(route_segments: list, conn) -> dict:
+    """Check if any segment on the route is currently closed.
+    Returns {"blocked": True, "road_name": ..., "reason": ..., "blocked_segment": ...}
+    or {"blocked": False}.
+    """
+    if not route_segments:
+        return {"blocked": False}
+    cur = conn.cursor()
+    try:
+        for segment in route_segments:
+            # segments may be dicts with 'name' key or plain strings
+            if isinstance(segment, dict):
+                seg_name = segment.get("name", "").strip()
+            else:
+                seg_name = str(segment).strip()
+            if not seg_name:
+                continue
+            cur.execute("""
+                SELECT road_name, reason
+                FROM road_closures
+                WHERE active = TRUE
+                  AND %s ILIKE concat('%%', road_name, '%%')
+            """, (seg_name,))
+            row = cur.fetchone()
+            if row:
+                return {
+                    "blocked": True,
+                    "road_name": row[0],
+                    "reason": row[1],
+                    "blocked_segment": seg_name,
+                }
+        return {"blocked": False}
+    except Exception as e:
+        print(f"Closure check error: {e}")
+        return {"blocked": False}
+    finally:
+        cur.close()
+
+
 async def publish_event(queue_name: str, payload: dict):
     try:
         connection = await aio_pika.connect_robust(RABBITMQ_URL)
@@ -305,6 +344,24 @@ async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
         raise
     except Exception:
         pass
+
+    # Road closure check — block booking if route passes through a closed road
+    if route_segments:
+        _closure_conn = get_conn()
+        closure_check = await check_road_closures(route_segments, _closure_conn)
+        _closure_conn.close()
+        if closure_check["blocked"]:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "route_blocked",
+                    "message": f"This route passes through a closed road: {closure_check['road_name']}",
+                    "road_name": closure_check["road_name"],
+                    "reason": closure_check["reason"],
+                    "blocked_segment": closure_check["blocked_segment"],
+                    "suggestion": "Please rebook when this road reopens or choose an alternative route.",
+                },
+            )
 
     # Detect regions
     dest_region = detect_region(req.destination)
