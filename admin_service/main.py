@@ -199,6 +199,42 @@ def replication_lag(user=Depends(verify_token)):
     }
 
 
+@app.get("/admin/replicated")
+def get_replicated(user=Depends(verify_token)):
+    """Show replication status — journeys received from other regions."""
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT origin_region,
+                   COUNT(*) AS total,
+                   COUNT(CASE WHEN status = 'CONFIRMED' THEN 1 END) AS confirmed,
+                   MAX(replicated_at) AS last_replicated
+            FROM replicated_journeys
+            GROUP BY origin_region
+            ORDER BY origin_region
+        """)
+        rows = cur.fetchall()
+    except Exception:
+        rows = []
+    cur.close()
+    conn.close()
+    return {
+        "local_region": REGION,
+        "replicated_from": [
+            {
+                "origin_region": r[0],
+                "total_journeys": r[1],
+                "confirmed": r[2],
+                "last_replicated": str(r[3]),
+            }
+            for r in rows
+        ],
+        "replication_type": "async via RabbitMQ",
+        "consistency_model": "eventual",
+    }
+
+
 @app.get("/admin/all-regions")
 async def all_regions(user=Depends(require_role("admin"))):
     region_urls = {
