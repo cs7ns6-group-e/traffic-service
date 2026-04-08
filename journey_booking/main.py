@@ -265,13 +265,9 @@ async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
                                   json={"origin": req.origin, "destination": req.destination})
             if r.status_code == 200:
                 route_data = r.json()
-                route_segments = extract_segments(route_data)
-                raw_dist = route_data.get("distance_m", 0)
-                raw_dur = route_data.get("duration_s", 0)
-                if raw_dist:
-                    distance_km = round(raw_dist / 1000, 2)
-                if raw_dur:
-                    duration_mins = int(raw_dur / 60)
+                route_segments = route_data.get("segments", [])
+                distance_km = route_data.get("distance_km") or None
+                duration_mins = route_data.get("duration_mins") or None
     except Exception as e:
         print(f"Routing error: {e}")
 
