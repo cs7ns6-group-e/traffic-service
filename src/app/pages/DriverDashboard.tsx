@@ -62,10 +62,13 @@ export default function DriverDashboard() {
     setError(null);
     apiGet<ApiJourney[] | { journeys: ApiJourney[] }>(`${ENDPOINTS.JOURNEYS}?driver_id=${encodeURIComponent(user.email)}`)
       .then((data) => {
+        console.log("[DriverDashboard] raw response:", data);
         const list = Array.isArray(data) ? data : ((data as { journeys?: ApiJourney[] }).journeys ?? []);
+        console.log("[DriverDashboard] parsed journeys:", list.length, list);
         setJourneys(list);
       })
       .catch((err) => {
+        console.error("[DriverDashboard] fetch error:", err);
         setError(err instanceof Error ? err.message : "Failed to load journeys. Please try again.");
       })
       .finally(() => setLoading(false));
