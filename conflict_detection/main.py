@@ -61,6 +61,20 @@ class InvalidateRequest(BaseModel):
     start_time: str
 
 
+class ReserveRequest(BaseModel):
+    origin: str
+    destination: str
+    slot: str
+    driver_id: str
+
+
+class ReleaseRequest(BaseModel):
+    origin: str
+    destination: str
+    slot: str
+    driver_id: str
+
+
 def round_to_slot(dt: datetime) -> str:
     """Round datetime down to nearest 30-minute bucket."""
     minute = 0 if dt.minute < 30 else 30
@@ -125,68 +139,138 @@ def check_conflict(req: CheckRequest):
 
 
 @app.get("/slots")
-def get_slots(origin: str, destination: str, date: str, driver_id: str = ""):
+def get_slots(
+    origin: str,
+    destination: str,
+    date: str,
+    driver_id: str = "",
+    vehicle_type: str = "STANDARD",
+):
     """
-    Returns 30-min time slots from 06:00 to 22:00 for the given route/date.
-    A slot is unavailable if the driver already has a booking in that window.
+    Returns 30-min slots 06:00–22:00. Checks ALL drivers (global road capacity).
+    Also checks Redis ghost holds (someone has selected but not yet booked).
     """
+    # Emergency vehicles see all slots free
+    if vehicle_type == "EMERGENCY":
+        slots = []
+        for hour in range(6, 22):
+            for minute in [0, 30]:
+                slots.append({
+                    "slot": f"{hour:02d}:{minute:02d}",
+                    "available": True,
+                    "reason": "emergency_bypass",
+                    "held_by_you": False,
+                })
+        return slots
+
     try:
-        base = datetime.strptime(date, "%Y-%m-%d")
-    except ValueError:
+        base_date = datetime.strptime(date, "%Y-%m-%d")
+    except Exception:
         raise HTTPException(400, "date must be YYYY-MM-DD")
 
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+    except Exception as e:
+        raise HTTPException(503, f"DB connection failed: {e}")
+
     slots = []
-    hour = 6
-    minute = 0
-    while hour < 22:
-        slot_dt = base.replace(hour=hour, minute=minute)
-        slot_end = slot_dt + timedelta(minutes=30)
-        slot_str = slot_dt.strftime("%H:%M")
-        available = True
-        reason = ""
+    for hour in range(6, 22):
+        for minute in [0, 30]:
+            slot_str = f"{hour:02d}:{minute:02d}"
+            slot_start = base_date.replace(hour=hour, minute=minute, second=0)
+            slot_end = slot_start + timedelta(minutes=30)
 
-        # Check Redis lock for this driver+slot
-        if driver_id:
-            lock_key = slot_lock_key(driver_id, origin, destination, slot_dt.isoformat())
             try:
-                if redis_client.exists(lock_key):
-                    available = False
-                    reason = "ghost_reservation"
-            except Exception:
-                pass
-
-        # Check DB for this driver on this route in this window
-        if available and driver_id:
-            try:
-                conn = get_conn()
-                cur = conn.cursor()
+                # CHECK 1: Any driver has a confirmed booking in this window
                 cur.execute(
                     "SELECT COUNT(*) FROM journeys "
-                    "WHERE driver_id = %s AND origin = %s AND destination = %s "
-                    "AND start_time BETWEEN %s AND %s "
-                    "AND status NOT IN ('CANCELLED', 'AUTHORITY_CANCELLED')",
-                    (driver_id, origin, destination, slot_dt, slot_end),
+                    "WHERE origin = %s AND destination = %s "
+                    "AND start_time >= %s AND start_time < %s "
+                    "AND status IN ('CONFIRMED', 'EMERGENCY_CONFIRMED', 'PENDING')",
+                    (origin, destination, slot_start, slot_end),
                 )
-                count = cur.fetchone()[0]
-                cur.close()
-                conn.close()
-                if count > 0:
-                    available = False
-                    reason = "booked"
+                db_count = cur.fetchone()[0]
+                if db_count > 0:
+                    slots.append({
+                        "slot": slot_str,
+                        "available": False,
+                        "reason": "booked",
+                        "held_by_you": False,
+                    })
+                    continue
+
+                # CHECK 2: Redis ghost hold (someone selected but not booked yet)
+                hold_key = f"slot_hold:{origin}:{destination}:{slot_str}"
+                hold_raw = redis_client.get(hold_key)
+                if hold_raw:
+                    try:
+                        hold_data = json.loads(hold_raw)
+                        held_by = hold_data.get("driver_id", "")
+                        held_by_you = bool(held_by and held_by == driver_id)
+                    except Exception:
+                        held_by_you = False
+                    slots.append({
+                        "slot": slot_str,
+                        "available": False,
+                        "reason": "being_selected",
+                        "held_by_you": held_by_you,
+                    })
+                    continue
+
+                slots.append({
+                    "slot": slot_str,
+                    "available": True,
+                    "reason": "",
+                    "held_by_you": False,
+                })
+
             except Exception as e:
-                print(f"Slots DB error: {e}")
+                slots.append({
+                    "slot": slot_str,
+                    "available": True,
+                    "reason": f"check_error: {e}",
+                    "held_by_you": False,
+                })
 
-        entry = {"slot": slot_str, "available": available}
-        if not available:
-            entry["reason"] = reason
-        slots.append(entry)
-
-        minute += 30
-        if minute >= 60:
-            minute = 0
-            hour += 1
-
+    cur.close()
+    conn.close()
     return slots
+
+
+@app.post("/reserve-slot")
+def reserve_slot(req: ReserveRequest):
+    """Ghost reservation — holds a slot for 120s while driver completes booking."""
+    hold_key = f"slot_hold:{req.origin}:{req.destination}:{req.slot}"
+    value = json.dumps({
+        "driver_id": req.driver_id,
+        "reserved_at": datetime.utcnow().isoformat(),
+    })
+    redis_client.setex(hold_key, 120, value)
+    return {
+        "reserved": True,
+        "slot": req.slot,
+        "expires_in": 120,
+        "key": hold_key,
+    }
+
+
+@app.post("/release-slot")
+def release_slot(req: ReleaseRequest):
+    """Release a ghost reservation — only the holding driver can release."""
+    hold_key = f"slot_hold:{req.origin}:{req.destination}:{req.slot}"
+    existing = redis_client.get(hold_key)
+    if existing:
+        try:
+            data = json.loads(existing)
+            if data.get("driver_id") == req.driver_id:
+                redis_client.delete(hold_key)
+                return {"released": True, "key": hold_key}
+            return {"released": False, "reason": "Not your hold"}
+        except Exception:
+            redis_client.delete(hold_key)
+            return {"released": True}
+    return {"released": False, "reason": "No hold found"}
 
 
 @app.post("/cross-region", status_code=201)

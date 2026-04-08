@@ -125,6 +125,7 @@ def init_db():
         ALTER TABLE journeys ADD COLUMN IF NOT EXISTS distance_km FLOAT;
         ALTER TABLE journeys ADD COLUMN IF NOT EXISTS duration_mins INTEGER;
         ALTER TABLE journeys ADD COLUMN IF NOT EXISTS cancelled_reason TEXT;
+        ALTER TABLE journeys ADD COLUMN IF NOT EXISTS driver_email TEXT;
     """)
     conn.commit()
     cur.close()
@@ -297,11 +298,11 @@ async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
     cur = conn.cursor()
     journey_id = str(uuid.uuid4())
     cur.execute(
-        "INSERT INTO journeys (id, driver_id, origin, destination, start_time, "
+        "INSERT INTO journeys (id, driver_id, driver_email, origin, destination, start_time, "
         "status, region, dest_region, is_cross_region, vehicle_type, route_segments, "
         "route_id, distance_km, duration_mins) "
-        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id, created_at",
-        (journey_id, driver_id, req.origin, req.destination, start_time,
+        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id, created_at",
+        (journey_id, driver_id, driver_email, req.origin, req.destination, start_time,
          "CONFIRMED", REGION, dest_region, is_cross_region, vehicle_type,
          json.dumps(route_segments), req.route_id, distance_km, duration_mins),
     )
@@ -437,26 +438,39 @@ def get_journey(journey_id: str, user: dict = Depends(verify_token)):
 
 
 @app.get("/journeys")
-def list_journeys(driver_id: Optional[str] = None, user: dict = Depends(verify_token)):
+def list_journeys(user: dict = Depends(verify_token)):
     conn = get_conn()
     cur = conn.cursor()
-    cols = ["id", "driver_id", "origin", "destination", "start_time",
+    cols = ["id", "driver_id", "driver_email", "origin", "destination", "start_time",
             "status", "region", "dest_region", "is_cross_region",
-            "vehicle_type", "route_segments", "route_id",
-            "distance_km", "duration_mins", "created_at"]
+            "vehicle_type", "route_segments", "distance_km", "duration_mins",
+            "created_at", "cancelled_reason"]
     select = (
-        "SELECT id, driver_id, origin, destination, start_time, status, region, "
-        "dest_region, is_cross_region, vehicle_type, route_segments, route_id, "
-        "distance_km, duration_mins, created_at FROM journeys"
+        "SELECT id, driver_id, driver_email, origin, destination, start_time, status, region, "
+        "dest_region, is_cross_region, vehicle_type, route_segments, "
+        "distance_km, duration_mins, created_at, cancelled_reason FROM journeys"
     )
-    if driver_id:
-        cur.execute(select + " WHERE driver_id = %s ORDER BY created_at DESC", (driver_id,))
-    else:
+    if user.get("role") in ("traffic_authority", "admin"):
         cur.execute(select + " ORDER BY created_at DESC LIMIT 100")
+    else:
+        cur.execute(select + " WHERE driver_id = %s ORDER BY created_at DESC", (user["sub"],))
     rows = cur.fetchall()
     cur.close()
     conn.close()
-    return [dict(zip(cols, r)) for r in rows]
+    result = []
+    for row in rows:
+        j = dict(zip(cols, row))
+        j["start_time"] = str(j["start_time"])
+        j["created_at"] = str(j["created_at"])
+        if isinstance(j["route_segments"], str):
+            try:
+                j["route_segments"] = json.loads(j["route_segments"] or "[]")
+            except Exception:
+                j["route_segments"] = []
+        elif j["route_segments"] is None:
+            j["route_segments"] = []
+        result.append(j)
+    return result
 
 
 @app.get("/health")
