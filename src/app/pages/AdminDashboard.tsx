@@ -5,7 +5,7 @@ import { RegionBadge } from "../components/RegionBadge";
 import { Button } from "../components/ui/button";
 import { Progress } from "../components/ui/progress";
 import { toast } from "sonner";
-import { apiGet } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 import { ENDPOINTS } from "../api/config";
 
 interface ServiceHealth {
@@ -41,6 +41,22 @@ interface CacheData {
   hitRate?: number;
 }
 
+interface ReplicationEntry {
+  replicated_count?: number;
+  count?: number;
+  last_replicated_at?: string;
+  last_sync?: string;
+  lag_ms?: number;
+  lag?: number;
+  status?: string;
+}
+
+interface ReplicationData {
+  EU?: ReplicationEntry;
+  US?: ReplicationEntry;
+  APAC?: ReplicationEntry;
+}
+
 const DEFAULT_SERVICES: ServiceHealth[] = [
   { name: "API Gateway",        status: "ONLINE", responseTime: 45,  replicas: 3 },
   { name: "Journey Booking",    status: "ONLINE", responseTime: 87,  replicas: 5 },
@@ -68,6 +84,10 @@ export default function AdminDashboard() {
   const [loadingRegions, setLoadingRegions] = useState(true);
   const [loadingMetrics, setLoadingMetrics] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [replicationData, setReplicationData] = useState<ReplicationData | null>(null);
+  const [loadingReplication, setLoadingReplication] = useState(true);
+  const [testRunning, setTestRunning] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   const fetchHealth = useCallback(() => {
     setLoadingHealth(true);
@@ -158,10 +178,19 @@ export default function AdminDashboard() {
     }).finally(() => setLoadingMetrics(false));
   }, []);
 
+  const fetchReplication = useCallback(() => {
+    setLoadingReplication(true);
+    apiGet<ReplicationData>(ENDPOINTS.ADMIN_REPLICATED)
+      .then((data) => setReplicationData(data))
+      .catch(() => {})
+      .finally(() => setLoadingReplication(false));
+  }, []);
+
   function refreshAll() {
     fetchHealth();
     fetchRegions();
     fetchMetrics();
+    fetchReplication();
     setLastUpdated(new Date());
   }
 
@@ -169,7 +198,57 @@ export default function AdminDashboard() {
     refreshAll();
     const id = setInterval(refreshAll, 30000);
     return () => clearInterval(id);
-  }, [fetchHealth, fetchRegions, fetchMetrics]);
+  }, [fetchHealth, fetchRegions, fetchMetrics, fetchReplication]);
+
+  function getLagStatus(lagMs: number) {
+    if (lagMs < 500)  return { color: "bg-green-500",  badge: "bg-green-100 text-green-700",   label: "Low" };
+    if (lagMs < 2000) return { color: "bg-yellow-500", badge: "bg-yellow-100 text-yellow-700", label: "Medium" };
+    return              { color: "bg-red-500",    badge: "bg-red-100 text-red-700",     label: "High" };
+  }
+
+  function fmtLag(lagMs: number): string {
+    return lagMs < 1000 ? `${lagMs}ms` : `${(lagMs / 1000).toFixed(1)}s`;
+  }
+
+  function replCount(entry?: ReplicationEntry): number {
+    return entry?.replicated_count ?? entry?.count ?? 0;
+  }
+
+  function replTime(entry?: ReplicationEntry): string {
+    const ts = entry?.last_replicated_at ?? entry?.last_sync;
+    if (!ts) return "—";
+    try {
+      const diffSecs = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+      if (diffSecs < 60) return `${diffSecs}s ago`;
+      const diffMins = Math.floor(diffSecs / 60);
+      if (diffMins < 60) return `${diffMins}m ago`;
+      return `${Math.floor(diffMins / 60)}h ago`;
+    } catch { return ts; }
+  }
+
+  async function handleTriggerReplication() {
+    setTestRunning(true);
+    setTestResult(null);
+    const before = {
+      EU:   replCount(replicationData?.EU),
+      US:   replCount(replicationData?.US),
+      APAC: replCount(replicationData?.APAC),
+    };
+    await apiPost(ENDPOINTS.ADMIN_REPLICATED).catch(() => null);
+    await new Promise<void>(r => setTimeout(r, 5000));
+    try {
+      const data = await apiGet<ReplicationData>(ENDPOINTS.ADMIN_REPLICATED);
+      setReplicationData(data);
+      const delta = (["EU", "US", "APAC"] as const)
+        .map(r => `${r}: +${replCount(data?.[r]) - before[r]}`)
+        .join("  |  ");
+      setTestResult(`Replication complete — ${delta}`);
+    } catch {
+      setTestResult("Could not verify replication results.");
+    } finally {
+      setTestRunning(false);
+    }
+  }
 
   function handleScaleService(name: string, dir: "up" | "down") {
     setServices(services.map(s => {
@@ -315,6 +394,59 @@ export default function AdminDashboard() {
             </div>
           )}
         </div>
+      </div>
+      {/* Data Replication */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Data Replication</h2>
+            <span className="inline-flex items-center gap-1.5 mt-1 text-xs font-medium bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">
+              <Database className="w-3 h-3" /> Eventual consistency via RabbitMQ federation
+            </span>
+          </div>
+          <Button size="sm" variant="outline" onClick={handleTriggerReplication} disabled={testRunning}>
+            {testRunning
+              ? <RefreshCw className="w-3 h-3 mr-1.5 animate-spin" />
+              : <Radio className="w-3 h-3 mr-1.5" />}
+            {testRunning ? "Testing…" : "Trigger test replication"}
+          </Button>
+        </div>
+        {testResult && (
+          <div className="mb-4 px-3 py-2 bg-blue-50 border border-blue-200 rounded text-sm text-blue-800">
+            {testResult}
+          </div>
+        )}
+        {loadingReplication ? (
+          <div className="h-32 bg-gray-100 rounded animate-pulse" />
+        ) : (
+          <div className="grid grid-cols-3 gap-4">
+            {(["EU", "US", "APAC"] as const).map((region) => {
+              const entry = replicationData?.[region];
+              const lagMs = entry?.lag_ms ?? entry?.lag ?? 0;
+              const lagSt = getLagStatus(lagMs);
+              return (
+                <div key={region} className="border border-gray-100 rounded-lg p-4 text-center space-y-2">
+                  <div className="flex items-center justify-center">
+                    <RegionBadge region={region} />
+                  </div>
+                  <div className="flex items-center justify-center gap-1.5">
+                    <div className={`w-2.5 h-2.5 rounded-full ${lagSt.color}`} />
+                    <span className="text-sm font-semibold text-gray-900">
+                      {lagMs > 0 ? fmtLag(lagMs) : "—"}
+                    </span>
+                    <span className="text-xs text-gray-400">lag</span>
+                  </div>
+                  <p className="text-2xl font-bold text-gray-900">{replCount(entry).toLocaleString()}</p>
+                  <p className="text-xs text-gray-500">replicated records</p>
+                  <p className="text-xs text-gray-400">Last sync: {replTime(entry)}</p>
+                  <span className={`inline-block text-xs px-2 py-0.5 rounded-full font-medium ${lagSt.badge}`}>
+                    {lagSt.label} lag
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
       <p className="text-xs text-gray-400 text-right">Auto-refreshes every 30 seconds</p>
     </div>
