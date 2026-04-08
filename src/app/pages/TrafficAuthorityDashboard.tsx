@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from "react";
-import { MapPin, XCircle, Plus, Search, Filter, AlertCircle, Radio, Lock, Eye } from "lucide-react";
+import { useState, useEffect } from "react";
+import { MapPin, XCircle, Plus, Search, Filter, AlertCircle, Radio, Lock } from "lucide-react";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { RegionBadge } from "../components/RegionBadge";
@@ -74,11 +74,8 @@ export default function TrafficAuthorityDashboard() {
     cancelAffected: false,
   });
 
-  // Segments combobox state
+  // Segments dropdown state
   const [availableSegments, setAvailableSegments] = useState<string[]>([]);
-  const [segmentSearch, setSegmentSearch] = useState("");
-  const [showSegmentDropdown, setShowSegmentDropdown] = useState(false);
-  const comboboxRef = useRef<HTMLDivElement>(null);
 
   // Preview state
   const [closurePreview, setClosurePreview] = useState<ClosurePreview | null>(null);
@@ -98,21 +95,16 @@ export default function TrafficAuthorityDashboard() {
   const [cancelReason, setCancelReason] = useState("");
   const [cancelling, setCancelling] = useState(false);
 
-  // Close segment dropdown on outside click
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (comboboxRef.current && !comboboxRef.current.contains(e.target as Node)) {
-        setShowSegmentDropdown(false);
-      }
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
   useEffect(() => {
     fetchAll();
-    apiGet<string[]>(ENDPOINTS.AUTHORITY_SEGMENTS)
-      .then((data) => setAvailableSegments(Array.isArray(data) ? data : []))
+    apiGet<unknown>(ENDPOINTS.AUTHORITY_SEGMENTS)
+      .then((res) => {
+        const obj = res as { segments?: unknown };
+        setAvailableSegments(
+          Array.isArray(obj?.segments) ? (obj.segments as string[]) :
+          Array.isArray(res) ? (res as string[]) : []
+        );
+      })
       .catch(() => {});
   }, []);
 
@@ -162,11 +154,6 @@ export default function TrafficAuthorityDashboard() {
     cancelled: journeys.filter(j => j.region === r && (j.status === "CANCELLED" || j.status === "AUTHORITY_CANCELLED")).length,
   }));
 
-  // Filtered segments for combobox
-  const filteredSegments = availableSegments
-    .filter(s => s.toLowerCase().includes(segmentSearch.toLowerCase()))
-    .slice(0, 20);
-
   async function handleForceCancel() {
     if (!cancelTarget || !cancelReason.trim()) { toast.error("Please enter a reason"); return; }
     setCancelling(true);
@@ -212,7 +199,6 @@ export default function TrafficAuthorityDashboard() {
       setClosurePreview(null);
       setIsClosureModalOpen(false);
       setClosureData({ roadName: "", region: "EU", reason: "", cancelAffected: false });
-      setSegmentSearch("");
       setClosureResult(result);
       fetchAll();
     } catch (err: unknown) {
@@ -225,8 +211,6 @@ export default function TrafficAuthorityDashboard() {
   function resetClosureModal() {
     setIsClosureModalOpen(false);
     setClosureData({ roadName: "", region: "EU", reason: "", cancelAffected: false });
-    setSegmentSearch("");
-    setShowSegmentDropdown(false);
     setClosurePreview(null);
   }
 
@@ -426,54 +410,25 @@ export default function TrafficAuthorityDashboard() {
               </Select>
             </div>
 
-            {/* Road Name — searchable combobox + Preview */}
+            {/* Road Name — pure select dropdown */}
             <div className="space-y-2">
               <Label>Road Name</Label>
-              <div className="flex gap-2">
-                <div className="relative flex-1" ref={comboboxRef}>
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
-                  <Input
-                    placeholder="Search road segments…"
-                    value={segmentSearch}
-                    onChange={(e) => {
-                      setSegmentSearch(e.target.value);
-                      setClosureData(d => ({ ...d, roadName: e.target.value }));
-                      setShowSegmentDropdown(true);
-                    }}
-                    onFocus={() => setShowSegmentDropdown(true)}
-                    className="pl-9"
-                  />
-                  {showSegmentDropdown && filteredSegments.length > 0 && (
-                    <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-44 overflow-y-auto">
-                      {filteredSegments.map(seg => (
-                        <button
-                          key={seg}
-                          type="button"
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 transition-colors"
-                          onMouseDown={(e) => e.preventDefault()} // prevent blur
-                          onClick={() => {
-                            setSegmentSearch(seg);
-                            setClosureData(d => ({ ...d, roadName: seg }));
-                            setShowSegmentDropdown(false);
-                          }}
-                        >
-                          {seg}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="gap-1.5 flex-shrink-0"
-                  disabled={!closureData.roadName || !closureData.reason || loadingPreview}
-                  onClick={handlePreviewClosure}
-                >
-                  <Eye className="w-4 h-4" />
-                  {loadingPreview ? "Loading…" : "Preview"}
-                </Button>
-              </div>
+              <select
+                value={closureData.roadName}
+                onChange={(e) => setClosureData(d => ({ ...d, roadName: e.target.value }))}
+                className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+              >
+                <option value="">Select a road segment...</option>
+                {(Array.isArray(availableSegments) ? availableSegments : []).map(seg => (
+                  <option key={seg} value={seg}>{seg}</option>
+                ))}
+                {(!Array.isArray(availableSegments) || availableSegments.length === 0) && (
+                  <option disabled>No active journeys — book journeys first</option>
+                )}
+              </select>
+              <p className="text-xs text-gray-500">
+                {(Array.isArray(availableSegments) ? availableSegments : []).length} road segments available from active journeys
+              </p>
             </div>
 
             {/* Reason */}
@@ -502,7 +457,7 @@ export default function TrafficAuthorityDashboard() {
               disabled={!closureData.roadName || !closureData.reason || loadingPreview}
               className="bg-[#2563EB] hover:bg-[#1d4ed8]"
             >
-              {loadingPreview ? "Loading preview…" : "Preview & Create"}
+              {loadingPreview ? "Loading…" : "Preview & Create"}
             </Button>
           </DialogFooter>
         </DialogContent>
