@@ -37,11 +37,21 @@ interface Closure {
   affected_journeys?: number;
 }
 
+interface AffectedJourney {
+  id: string;
+  origin: string;
+  destination: string;
+  start_time?: string;
+  vehicle_type?: string;
+  status?: string;
+  driver_email?: string;
+}
+
 interface ClosurePreview {
   road_name: string;
-  affected_journeys: number;
+  will_cancel?: number;
   emergency_skipped: number;
-  affected_routes?: Array<string | { origin: string; destination: string }>;
+  affected_journeys?: AffectedJourney[];
 }
 
 interface ClosureResult {
@@ -475,7 +485,9 @@ export default function TrafficAuthorityDashboard() {
 
             <div className="grid grid-cols-2 gap-4 text-center">
               <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-2xl font-bold text-gray-900">{closurePreview.affected_journeys}</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {closurePreview.will_cancel ?? (Array.isArray(closurePreview.affected_journeys) ? closurePreview.affected_journeys.length : 0)}
+                </p>
                 <p className="text-xs text-gray-500 mt-1">Journeys affected</p>
               </div>
               <div className="bg-gray-50 rounded-lg p-3">
@@ -484,12 +496,12 @@ export default function TrafficAuthorityDashboard() {
               </div>
             </div>
 
-            {closurePreview.affected_routes && closurePreview.affected_routes.length > 0 && (
+            {Array.isArray(closurePreview.affected_journeys) && closurePreview.affected_journeys.length > 0 && (
               <div>
                 <p className="text-xs font-medium text-gray-500 uppercase mb-2">Affected Routes</p>
                 <div className="space-y-1 max-h-32 overflow-y-auto bg-gray-50 rounded-lg p-3">
-                  {closurePreview.affected_routes.map((r, i) => (
-                    <p key={i} className="text-sm text-gray-700">• {routeLabel(r)}</p>
+                  {closurePreview.affected_journeys.map((j) => (
+                    <p key={j.id} className="text-sm text-gray-700">• {j.origin} → {j.destination}</p>
                   ))}
                 </div>
               </div>
