@@ -43,8 +43,8 @@ export default function DashboardLayout() {
 
   // Fetch real notification count for drivers
   useEffect(() => {
-    if (role !== "driver" || !user?.email) return;
-    apiGet<unknown>(`${ENDPOINTS.JOURNEYS}?driver_id=${encodeURIComponent(user.email)}`)
+    if (role !== "driver") return;
+    apiGet<unknown>(ENDPOINTS.JOURNEYS)
       .then((data) => {
         const list = Array.isArray(data) ? data : ((data as { journeys?: unknown[] }).journeys ?? []);
         const unread = (list as Array<{ status: string }>).filter(
@@ -53,7 +53,7 @@ export default function DashboardLayout() {
         setNotificationCount(unread);
       })
       .catch(() => {});
-  }, [role, user?.email]);
+  }, [role]);
 
   const roleConfig = {
     driver: {

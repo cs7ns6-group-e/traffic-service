@@ -31,7 +31,7 @@ interface ApiJourney {
 
 function formatDate(iso: string): string {
   try {
-    return new Date(iso).toLocaleString("en-GB", {
+    return new Date(iso).toLocaleString("en-IE", {
       weekday: "short", day: "numeric", month: "short", year: "numeric",
       hour: "2-digit", minute: "2-digit",
     });
@@ -57,24 +57,20 @@ export default function DriverDashboard() {
   const isEmergency = user?.vehicle_type === "EMERGENCY";
 
   function fetchJourneys() {
-    if (!user?.email) { setLoading(false); return; }
     setLoading(true);
     setError(null);
-    apiGet<ApiJourney[] | { journeys: ApiJourney[] }>(`${ENDPOINTS.JOURNEYS}?driver_id=${encodeURIComponent(user.email)}`)
+    apiGet<ApiJourney[] | { journeys: ApiJourney[] }>(ENDPOINTS.JOURNEYS)
       .then((data) => {
-        console.log("[DriverDashboard] raw response:", data);
         const list = Array.isArray(data) ? data : ((data as { journeys?: ApiJourney[] }).journeys ?? []);
-        console.log("[DriverDashboard] parsed journeys:", list.length, list);
         setJourneys(list);
       })
       .catch((err) => {
-        console.error("[DriverDashboard] fetch error:", err);
         setError(err instanceof Error ? err.message : "Failed to load journeys. Please try again.");
       })
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { fetchJourneys(); }, [user?.email]);
+  useEffect(() => { fetchJourneys(); }, []);
 
   const stats = {
     total: journeys.length,
@@ -189,7 +185,17 @@ export default function DriverDashboard() {
           </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-12 text-gray-500">
-            {journeys.length === 0 ? "No journeys yet. Book your first journey!" : "No journeys match your search."}
+            {journeys.length === 0 ? (
+              <span>
+                No journeys yet.{" "}
+                <button
+                  onClick={() => navigate("/driver/book-journey")}
+                  className="text-[#2563EB] underline hover:text-[#1d4ed8] font-medium"
+                >
+                  Book your first journey! →
+                </button>
+              </span>
+            ) : "No journeys match your search."}
           </div>
         ) : (
           <div className="space-y-4">
@@ -216,8 +222,12 @@ export default function DriverDashboard() {
                     {(journey.distance_km || journey.duration_mins) && (
                       <p className="text-xs text-gray-500 mt-1">
                         {journey.distance_km ? `${journey.distance_km} km` : ""}
-                        {journey.distance_km && journey.duration_mins ? " · " : ""}
-                        {journey.duration_mins ? `${journey.duration_mins} min` : ""}
+                        {journey.distance_km && journey.duration_mins ? " • " : ""}
+                        {journey.duration_mins
+                          ? journey.duration_mins >= 60
+                            ? `${Math.floor(journey.duration_mins / 60)}h ${journey.duration_mins % 60}min`
+                            : `${journey.duration_mins} min`
+                          : ""}
                       </p>
                     )}
                     {journey.route_segments && journey.route_segments.length > 0 && (
