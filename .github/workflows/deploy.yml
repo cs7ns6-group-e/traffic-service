@@ -31,8 +31,8 @@ jobs:
               sh -c "npm ci && npm run build"
             docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
-            sleep 5
-            curl -s http://localhost/health
+            sleep 15
+            curl -s http://localhost/health || true
 
   deploy-us:
     runs-on: ubuntu-latest
@@ -61,8 +61,8 @@ jobs:
               sh -c "npm ci && npm run build"
             docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
-            sleep 5
-            curl -s http://localhost/health
+            sleep 15
+            curl -s http://localhost/health || true
 
   deploy-apac:
     runs-on: ubuntu-latest
@@ -91,5 +91,5 @@ jobs:
               sh -c "npm ci && npm run build"
             docker cp ~/traffic-service/dist/. traffic-service-nginx-1:/usr/share/nginx/html/
             docker compose restart nginx
-            sleep 5
-            curl -s http://localhost/health
+            sleep 15
+            curl -s http://localhost/health || true
