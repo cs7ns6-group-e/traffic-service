@@ -4,6 +4,42 @@ Maintained automatically. Updated on every significant change.
 
 ---
 
+## [2026-04-08] — fix/trafficbook-complete
+
+### What changed
+- **conflict_detection**: scope changed to per-driver — same driver cannot double-book same route+slot; other drivers unaffected
+- **conflict_detection**: added GET /slots — 32 x 30-min slots (06:00–22:00) showing availability per driver
+- **conflict_detection**: Redis client now uses socket_timeout=5 to prevent hangs
+- **journey_booking**: route segments extracted as clean road name strings (not raw OSRM dicts)
+- **journey_booking**: distance_km and duration_mins saved to DB and returned in response
+- **journey_booking**: PENDING journeys auto-expire after 5 min via background thread
+- **journey_booking**: driver email passed to conflict check for per-driver scoping
+- **journey_booking**: full response fields (route_segments, distance_km, duration_mins, created_at)
+- **traffic_authority**: force cancel checks status — blocks EMERGENCY_CONFIRMED, handles already-done
+- **traffic_authority**: road closure cascade uses route_segments::text ILIKE (not origin/destination)
+- **traffic_authority**: publishes journey_force_cancelled_events per affected journey
+- **traffic_authority**: added GET /authority/closures endpoint
+- **traffic_authority**: response fields corrected (closure_id, affected_journeys, emergency_skipped)
+- **notification**: Gmail/SMTP removed entirely — Telegram only
+- **notification**: added handlers for journey_cancelled and journey_force_cancelled queues
+- **notification**: Telegram placeholder token → log-only mode (no crash)
+- **road_routing**: added GET /search for Nominatim autocomplete with 24h Redis cache
+- **road_routing**: POST /route returns distance_km, duration_mins, coordinates for Leaflet
+- **road_routing**: segment extraction returns clean named strings, filtered and deduplicated
+- **admin_service**: added GET /admin/latency with P50/P95 per-service metrics and SLA check
+- **nginx**: added /search → road_routing proxy route
+
+### Files modified
+- conflict_detection/main.py
+- journey_booking/main.py
+- traffic_authority/main.py
+- notification/main.py
+- road_routing/main.py
+- admin_service/main.py
+- nginx/nginx.conf
+
+---
+
 ## [Current] — April 7, 2026
 
 ### Infrastructure
