@@ -16,26 +16,28 @@ import {
 import { RegionBadge } from "../components/RegionBadge";
 import { Button } from "../components/ui/button";
 import { cn } from "../components/ui/utils";
+import { useAuth } from "../context/AuthContext";
 
 export default function DashboardLayout() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user, logout } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [notificationCount, setNotificationCount] = useState(3);
+  const [notificationCount] = useState(3);
 
-  // Determine user role from path
-  const role = location.pathname.startsWith("/driver")
-    ? "driver"
-    : location.pathname.startsWith("/authority")
-    ? "traffic_authority"
-    : "admin";
+  // Redirect to login if not authenticated
+  useEffect(() => {
+    if (!user) navigate("/login", { replace: true });
+  }, [user, navigate]);
 
-  // Mock user data
-  const user = {
-    name: role === "driver" ? "John Driver" : role === "traffic_authority" ? "Sarah Authority" : "Admin User",
-    email: role === "driver" ? "john@example.com" : role === "traffic_authority" ? "sarah@authority.gov" : "admin@trafficbook.com",
-    region: "EU" as const,
-  };
+  // Derive role from JWT user; fallback to path for initial render
+  const role: "driver" | "traffic_authority" | "admin" =
+    user?.role ??
+    (location.pathname.startsWith("/driver")
+      ? "driver"
+      : location.pathname.startsWith("/authority")
+      ? "traffic_authority"
+      : "admin");
 
   const roleConfig = {
     driver: {
@@ -72,8 +74,11 @@ export default function DashboardLayout() {
   const RoleIcon = config.icon;
 
   const handleLogout = () => {
+    logout();
     navigate("/login");
   };
+
+  if (!user) return null;
 
   return (
     <div className="min-h-screen bg-gray-50">

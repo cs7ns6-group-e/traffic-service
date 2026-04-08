@@ -1,99 +1,111 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router";
-import { MapPin, Calendar, ArrowRight, CheckCircle2, Clock, XCircle, AlertCircle } from "lucide-react";
+import { MapPin, Calendar, ArrowRight, CheckCircle2, Clock, XCircle, AlertCircle, Zap } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { StatusBadge } from "../components/StatusBadge";
 import { RegionBadge } from "../components/RegionBadge";
 import { RoadSegmentChip } from "../components/RoadSegmentChip";
 import { toast } from "sonner";
+import { apiGet, apiDelete } from "../api/client";
+import { ENDPOINTS } from "../api/config";
+
+interface ApiJourney {
+  id: string;
+  driver_id: string;
+  origin: string;
+  destination: string;
+  start_time: string;
+  status: "CONFIRMED" | "PENDING" | "CANCELLED" | "AUTHORITY_CANCELLED" | "EMERGENCY_CONFIRMED";
+  region: "EU" | "US" | "APAC";
+  vehicle_type?: "STANDARD" | "EMERGENCY" | "AUTHORITY";
+  distance_km?: number;
+  duration_mins?: number;
+  road_segments?: string[];
+  created_at?: string;
+}
+
+function buildTimeline(status: ApiJourney["status"]) {
+  if (status === "EMERGENCY_CONFIRMED") {
+    return [
+      { status: "Submitted", icon: CheckCircle2, color: "text-green-600", bgColor: "bg-green-100", completed: true },
+      { status: "Emergency Bypass — Instantly Approved", icon: Zap, color: "text-red-600", bgColor: "bg-red-100", completed: true },
+    ];
+  }
+  const steps = [
+    { status: "Submitted", completed: true },
+    { status: "Conflict Check", completed: status !== "PENDING" },
+    { status: "Authority Review", completed: status === "CONFIRMED" || status === "AUTHORITY_CANCELLED" },
+    { status: status === "AUTHORITY_CANCELLED" ? "Authority Cancelled" : status === "CANCELLED" ? "Cancelled" : "Approved", completed: status === "CONFIRMED" || status === "AUTHORITY_CANCELLED" || status === "CANCELLED" },
+  ];
+  return steps.map(s => ({
+    ...s,
+    icon: s.completed ? (s.status.includes("Cancelled") ? XCircle : CheckCircle2) : Clock,
+    color: s.completed ? (s.status.includes("Cancelled") ? "text-red-600" : "text-green-600") : "text-gray-400",
+    bgColor: s.completed ? (s.status.includes("Cancelled") ? "bg-red-100" : "bg-green-100") : "bg-gray-100",
+  }));
+}
+
+function parseStartTime(start_time: string) {
+  try {
+    const d = new Date(start_time);
+    return { date: d.toISOString().split("T")[0], time: d.toTimeString().slice(0, 5) };
+  } catch { return { date: start_time, time: "" }; }
+}
 
 export default function JourneyDetail() {
   const navigate = useNavigate();
-  const { id } = useParams();
+  const { id } = useParams<{ id: string }>();
+  const [journey, setJourney] = useState<ApiJourney | null>(null);
+  const [loading, setLoading] = useState(true);
   const [isCancelling, setIsCancelling] = useState(false);
 
-  // Mock journey data
-  const journey = {
-    id: id || "J2024-0847",
-    origin: "Berlin, Germany",
-    destination: "Munich, Germany",
-    date: "2026-04-02",
-    time: "14:30",
-    status: "CONFIRMED" as const,
-    region: "EU" as const,
-    createdAt: "2026-03-25 10:30",
-    distance: "584 km",
-    duration: "5h 45min",
-    roadSegments: [
-      "A1 - Berlin Ring",
-      "A9 - Munich Autobahn",
-      "B12 - Inner Munich Route",
-      "A95 - Southern Bypass",
-    ],
-  };
+  useEffect(() => {
+    if (!id) return;
+    apiGet<ApiJourney>(ENDPOINTS.JOURNEY(id))
+      .then(setJourney)
+      .catch(() => toast.error("Failed to load journey"))
+      .finally(() => setLoading(false));
+  }, [id]);
 
-  const timeline = [
-    {
-      status: "Submitted",
-      timestamp: "2026-03-25 10:30",
-      icon: CheckCircle2,
-      color: "text-green-600",
-      bgColor: "bg-green-100",
-      completed: true,
-    },
-    {
-      status: "Conflict Check",
-      timestamp: "2026-03-25 10:31",
-      icon: CheckCircle2,
-      color: "text-green-600",
-      bgColor: "bg-green-100",
-      completed: true,
-    },
-    {
-      status: "Authority Review",
-      timestamp: "2026-03-25 11:15",
-      icon: CheckCircle2,
-      color: "text-green-600",
-      bgColor: "bg-green-100",
-      completed: true,
-    },
-    {
-      status: "Approved",
-      timestamp: "2026-03-25 11:20",
-      icon: CheckCircle2,
-      color: "text-green-600",
-      bgColor: "bg-green-100",
-      completed: true,
-    },
-  ];
-
-  const notifications = [
-    {
-      title: "Journey Approved",
-      message: "Your journey has been approved by the EU Traffic Authority",
-      timestamp: "2026-03-25 11:20",
-    },
-    {
-      title: "Conflict Check Passed",
-      message: "No conflicts detected with road closures or other journeys",
-      timestamp: "2026-03-25 10:31",
-    },
-    {
-      title: "Journey Submitted",
-      message: "Your journey request has been submitted for review",
-      timestamp: "2026-03-25 10:30",
-    },
-  ];
-
-  const handleCancelJourney = () => {
+  const handleCancelJourney = async () => {
+    if (!id) return;
     setIsCancelling(true);
-    setTimeout(() => {
+    try {
+      await apiDelete(ENDPOINTS.JOURNEY(id));
       toast.success("Journey cancelled successfully");
       navigate("/driver");
-    }, 1000);
+    } catch (err: unknown) {
+      toast.error("Cancel failed", { description: err instanceof Error ? err.message : "Unknown error" });
+    } finally {
+      setIsCancelling(false);
+    }
   };
 
-  const canCancel = journey.status === "CONFIRMED" && new Date(journey.date) > new Date();
+  if (loading) {
+    return (
+      <div className="max-w-5xl mx-auto space-y-6 animate-pulse">
+        <div className="h-10 bg-gray-200 rounded w-1/3" />
+        <div className="h-64 bg-gray-200 rounded" />
+      </div>
+    );
+  }
+
+  if (!journey) {
+    return (
+      <div className="max-w-5xl mx-auto">
+        <div className="bg-white rounded-lg border border-gray-200 p-12 text-center text-gray-500">
+          Journey not found.
+        </div>
+      </div>
+    );
+  }
+
+  const { date, time } = parseStartTime(journey.start_time);
+  const createdAt = journey.created_at ? parseStartTime(journey.created_at) : null;
+  const isEmergency = journey.vehicle_type === "EMERGENCY" || journey.status === "EMERGENCY_CONFIRMED";
+  const canCancel = (journey.status === "CONFIRMED" || journey.status === "EMERGENCY_CONFIRMED") && new Date(journey.start_time) > new Date();
+  const displayStatus = journey.status === "EMERGENCY_CONFIRMED" ? "CONFIRMED" : journey.status;
+  const timeline = buildTimeline(journey.status);
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -108,6 +120,17 @@ export default function JourneyDetail() {
         </Button>
       </div>
 
+      {/* EMERGENCY Banner */}
+      {isEmergency && (
+        <div className="bg-red-50 border border-red-300 rounded-lg p-4 flex items-start gap-3">
+          <Zap className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+          <div>
+            <h4 className="font-semibold text-red-900">🚨 EMERGENCY VEHICLE — Instant Approval</h4>
+            <p className="text-sm text-red-800 mt-1">This journey was instantly approved, bypassing conflict detection.</p>
+          </div>
+        </div>
+      )}
+
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Main Info */}
         <div className="lg:col-span-2 space-y-6">
@@ -118,7 +141,7 @@ export default function JourneyDetail() {
                 <h2 className="text-xl font-bold text-gray-900 mb-2">Journey Information</h2>
                 <div className="flex items-center gap-2">
                   <RegionBadge region={journey.region} />
-                  <StatusBadge status={journey.status} />
+                  <StatusBadge status={displayStatus as "CONFIRMED" | "PENDING" | "CANCELLED" | "AUTHORITY_CANCELLED"} />
                 </div>
               </div>
             </div>
@@ -146,39 +169,49 @@ export default function JourneyDetail() {
                   <label className="text-xs font-medium text-gray-500 uppercase">Scheduled Time</label>
                   <div className="flex items-center gap-2 mt-2">
                     <Calendar className="w-4 h-4 text-gray-400" />
-                    <span className="text-gray-900">{journey.date} at {journey.time}</span>
+                    <span className="text-gray-900">{date} at {time}</span>
                   </div>
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-500 uppercase">Created</label>
-                  <div className="flex items-center gap-2 mt-2">
-                    <Clock className="w-4 h-4 text-gray-400" />
-                    <span className="text-gray-900">{journey.createdAt}</span>
+                {createdAt && (
+                  <div>
+                    <label className="text-xs font-medium text-gray-500 uppercase">Created</label>
+                    <div className="flex items-center gap-2 mt-2">
+                      <Clock className="w-4 h-4 text-gray-400" />
+                      <span className="text-gray-900">{createdAt.date} at {createdAt.time}</span>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
 
               {/* Distance & Duration */}
-              <div className="grid sm:grid-cols-2 gap-4 pt-4 border-t">
-                <div>
-                  <label className="text-xs font-medium text-gray-500 uppercase">Distance</label>
-                  <p className="text-lg font-bold text-gray-900 mt-1">{journey.distance}</p>
+              {(journey.distance_km || journey.duration_mins) && (
+                <div className="grid sm:grid-cols-2 gap-4 pt-4 border-t">
+                  {journey.distance_km && (
+                    <div>
+                      <label className="text-xs font-medium text-gray-500 uppercase">Distance</label>
+                      <p className="text-lg font-bold text-gray-900 mt-1">{journey.distance_km} km</p>
+                    </div>
+                  )}
+                  {journey.duration_mins && (
+                    <div>
+                      <label className="text-xs font-medium text-gray-500 uppercase">Est. Duration</label>
+                      <p className="text-lg font-bold text-gray-900 mt-1">{journey.duration_mins} min</p>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <label className="text-xs font-medium text-gray-500 uppercase">Est. Duration</label>
-                  <p className="text-lg font-bold text-gray-900 mt-1">{journey.duration}</p>
-                </div>
-              </div>
+              )}
 
               {/* Road Segments */}
-              <div className="pt-4 border-t">
-                <label className="text-xs font-medium text-gray-500 uppercase">Road Segments</label>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  {journey.roadSegments.map((segment, index) => (
-                    <RoadSegmentChip key={index} roadName={segment} />
-                  ))}
+              {journey.road_segments && journey.road_segments.length > 0 && (
+                <div className="pt-4 border-t">
+                  <label className="text-xs font-medium text-gray-500 uppercase">Road Segments</label>
+                  <div className="flex flex-wrap gap-2 mt-2">
+                    {journey.road_segments.map((segment, index) => (
+                      <RoadSegmentChip key={index} roadName={segment} />
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Cancel Button */}
@@ -214,7 +247,6 @@ export default function JourneyDetail() {
                     </div>
                     <div className="flex-1 pb-4">
                       <p className="font-medium text-gray-900">{item.status}</p>
-                      <p className="text-sm text-gray-500">{item.timestamp}</p>
                     </div>
                   </div>
                 );
@@ -237,17 +269,22 @@ export default function JourneyDetail() {
             </div>
           </div>
 
-          {/* Notification History */}
+          {/* Journey Info Summary */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
-            <h3 className="text-lg font-bold text-gray-900 mb-4">Notifications</h3>
+            <h3 className="text-lg font-bold text-gray-900 mb-4">Summary</h3>
             <div className="space-y-3">
-              {notifications.map((notif, index) => (
-                <div key={index} className="pb-3 border-b last:border-0 last:pb-0">
-                  <p className="text-sm font-medium text-gray-900">{notif.title}</p>
-                  <p className="text-xs text-gray-600 mt-1">{notif.message}</p>
-                  <p className="text-xs text-gray-400 mt-1">{notif.timestamp}</p>
-                </div>
-              ))}
+              <div className="pb-3 border-b">
+                <p className="text-sm font-medium text-gray-900">Status</p>
+                <p className="text-xs text-gray-600 mt-1">{journey.status}</p>
+              </div>
+              <div className="pb-3 border-b">
+                <p className="text-sm font-medium text-gray-900">Region</p>
+                <p className="text-xs text-gray-600 mt-1">{journey.region}</p>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-900">Journey ID</p>
+                <p className="text-xs font-mono text-gray-600 mt-1">{journey.id}</p>
+              </div>
             </div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MapPin, XCircle, Plus, Search, Filter, AlertCircle, Radio } from "lucide-react";
 import { StatCard } from "../components/StatCard";
 import { StatusBadge } from "../components/StatusBadge";
@@ -12,6 +12,30 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Checkbox } from "../components/ui/checkbox";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { toast } from "sonner";
+import { apiGet, apiPost } from "../api/client";
+import { ENDPOINTS } from "../api/config";
+
+interface AuthorityJourney {
+  id: string;
+  driver_id: string;
+  origin: string;
+  destination: string;
+  start_time: string;
+  status: "CONFIRMED" | "PENDING" | "CANCELLED" | "AUTHORITY_CANCELLED" | "EMERGENCY_CONFIRMED";
+  region: "EU" | "US" | "APAC";
+  vehicle_type?: "STANDARD" | "EMERGENCY" | "AUTHORITY";
+}
+
+interface AuthorityStats {
+  active_journeys?: number;
+  cancelled_today?: number;
+  road_closures?: number;
+  cross_region?: number;
+  total?: number;
+  confirmed?: number;
+  pending?: number;
+  cancelled?: number;
+}
 
 export default function TrafficAuthorityDashboard() {
   const [selectedRegion, setSelectedRegion] = useState<"EU" | "US" | "APAC">("EU");
@@ -19,101 +43,121 @@ export default function TrafficAuthorityDashboard() {
   const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
   const [closureData, setClosureData] = useState({
     roadName: "",
-    region: "EU" as const,
+    region: "EU" as "EU" | "US" | "APAC",
     reason: "",
     cancelAffected: false,
   });
+  const [search, setSearch] = useState("");
+  const [journeys, setJourneys] = useState<AuthorityJourney[]>([]);
+  const [stats, setStats] = useState<AuthorityStats>({});
+  const [loadingJourneys, setLoadingJourneys] = useState(true);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [submittingClosure, setSubmittingClosure] = useState(false);
 
-  // Mock data
-  const stats = {
-    activeJourneys: 1247,
-    cancelledToday: 23,
-    roadClosures: 8,
-    crossRegion: 45,
+  useEffect(() => {
+    fetchJourneys();
+    fetchStats();
+  }, []);
+
+  function fetchJourneys() {
+    setLoadingJourneys(true);
+    apiGet<AuthorityJourney[]>(ENDPOINTS.AUTHORITY_JOURNEYS)
+      .then((data) => {
+        // Sort emergency journeys to the top
+        const sorted = [...data].sort((a, b) => {
+          const aEmerg = a.vehicle_type === "EMERGENCY" || a.status === "EMERGENCY_CONFIRMED" ? 0 : 1;
+          const bEmerg = b.vehicle_type === "EMERGENCY" || b.status === "EMERGENCY_CONFIRMED" ? 0 : 1;
+          return aEmerg - bEmerg;
+        });
+        setJourneys(sorted);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingJourneys(false));
+  }
+
+  function fetchStats() {
+    apiGet<AuthorityStats>(ENDPOINTS.AUTHORITY_STATS)
+      .then(setStats)
+      .catch(() => {});
+  }
+
+  const displayStats = {
+    activeJourneys: stats.active_journeys ?? stats.total ?? journeys.filter(j => j.status === "CONFIRMED" || j.status === "PENDING" || j.status === "EMERGENCY_CONFIRMED").length,
+    cancelledToday: stats.cancelled_today ?? stats.cancelled ?? journeys.filter(j => j.status === "CANCELLED" || j.status === "AUTHORITY_CANCELLED").length,
+    roadClosures: stats.road_closures ?? 0,
+    crossRegion: stats.cross_region ?? 0,
   };
 
-  const journeys = [
-    {
-      id: "J2024-0847",
-      driver: "John Driver",
-      origin: "Berlin, Germany",
-      destination: "Munich, Germany",
-      time: "2026-04-02 14:30",
-      status: "CONFIRMED" as const,
-      region: "EU" as const,
-    },
-    {
-      id: "J2024-0846",
-      driver: "Sarah Smith",
-      origin: "Hamburg, Germany",
-      destination: "Frankfurt, Germany",
-      time: "2026-03-31 09:15",
-      status: "PENDING" as const,
-      region: "EU" as const,
-    },
-    {
-      id: "J2024-0845",
-      driver: "Mike Johnson",
-      origin: "Paris, France",
-      destination: "Brussels, Belgium",
-      time: "2026-03-28 16:45",
-      status: "CONFIRMED" as const,
-      region: "EU" as const,
-    },
-    {
-      id: "J2024-0844",
-      driver: "Emma Brown",
-      origin: "Amsterdam, Netherlands",
-      destination: "Paris, France",
-      time: "2026-04-05 11:00",
-      status: "PENDING" as const,
-      region: "EU" as const,
-    },
-  ];
-
-  const roadClosures = [
-    {
-      id: "RC-001",
-      roadName: "A9 - Munich Autobahn",
-      region: "EU" as const,
-      reason: "Emergency maintenance",
-      createdAt: "2026-03-29 14:20",
-      affectedJourneys: 15,
-    },
-    {
-      id: "RC-002",
-      roadName: "B12 - Inner Munich Route",
-      region: "EU" as const,
-      reason: "Accident investigation",
-      createdAt: "2026-03-30 08:45",
-      affectedJourneys: 8,
-    },
-  ];
+  const filtered = journeys.filter(j => {
+    const matchesSearch = search === "" ||
+      j.id.toLowerCase().includes(search.toLowerCase()) ||
+      j.origin.toLowerCase().includes(search.toLowerCase()) ||
+      j.destination.toLowerCase().includes(search.toLowerCase()) ||
+      j.driver_id.toLowerCase().includes(search.toLowerCase());
+    return matchesSearch;
+  });
 
   const chartData = [
-    { region: "EU", confirmed: 847, pending: 123, cancelled: 45 },
-    { region: "US", confirmed: 654, pending: 89, cancelled: 32 },
-    { region: "APAC", confirmed: 543, pending: 67, cancelled: 28 },
+    {
+      region: "EU",
+      confirmed: journeys.filter(j => j.region === "EU" && (j.status === "CONFIRMED" || j.status === "EMERGENCY_CONFIRMED")).length,
+      pending: journeys.filter(j => j.region === "EU" && j.status === "PENDING").length,
+      cancelled: journeys.filter(j => j.region === "EU" && (j.status === "CANCELLED" || j.status === "AUTHORITY_CANCELLED")).length,
+    },
+    {
+      region: "US",
+      confirmed: journeys.filter(j => j.region === "US" && (j.status === "CONFIRMED" || j.status === "EMERGENCY_CONFIRMED")).length,
+      pending: journeys.filter(j => j.region === "US" && j.status === "PENDING").length,
+      cancelled: journeys.filter(j => j.region === "US" && (j.status === "CANCELLED" || j.status === "AUTHORITY_CANCELLED")).length,
+    },
+    {
+      region: "APAC",
+      confirmed: journeys.filter(j => j.region === "APAC" && (j.status === "CONFIRMED" || j.status === "EMERGENCY_CONFIRMED")).length,
+      pending: journeys.filter(j => j.region === "APAC" && j.status === "PENDING").length,
+      cancelled: journeys.filter(j => j.region === "APAC" && (j.status === "CANCELLED" || j.status === "AUTHORITY_CANCELLED")).length,
+    },
   ];
 
-  const handleForceCancel = (journeyId: string) => {
-    toast.success(`Journey ${journeyId} has been cancelled`, {
-      description: "The driver has been notified.",
-    });
+  const handleForceCancel = async (journeyId: string) => {
+    setCancellingId(journeyId);
+    try {
+      await apiPost(ENDPOINTS.AUTHORITY_CANCEL(journeyId));
+      toast.success(`Journey ${journeyId.slice(0, 8)} cancelled`, {
+        description: "The driver has been notified.",
+      });
+      fetchJourneys();
+    } catch (err: unknown) {
+      toast.error("Cancel failed", { description: err instanceof Error ? err.message : "Unknown error" });
+    } finally {
+      setCancellingId(null);
+    }
   };
 
-  const handleCreateClosure = () => {
+  const handleCreateClosure = async () => {
     if (!closureData.roadName || !closureData.reason) {
       toast.error("Please fill in all fields");
       return;
     }
-    toast.success("Road closure created", {
-      description: closureData.cancelAffected 
-        ? "Affected journeys have been cancelled"
-        : "Road closure is now active",
-    });
-    setIsClosureModalOpen(false);
-    setClosureData({ roadName: "", region: "EU", reason: "", cancelAffected: false });
+    setSubmittingClosure(true);
+    try {
+      await apiPost(ENDPOINTS.AUTHORITY_CLOSURE, {
+        road_name: closureData.roadName,
+        reason: closureData.reason,
+        region: closureData.region,
+      });
+      toast.success("Road closure created", {
+        description: closureData.cancelAffected
+          ? "Affected journeys have been cancelled"
+          : "Road closure is now active",
+      });
+      setIsClosureModalOpen(false);
+      setClosureData({ roadName: "", region: "EU", reason: "", cancelAffected: false });
+      fetchStats();
+    } catch (err: unknown) {
+      toast.error("Failed to create closure", { description: err instanceof Error ? err.message : "Unknown error" });
+    } finally {
+      setSubmittingClosure(false);
+    }
   };
 
   const handleBroadcast = () => {
@@ -122,6 +166,13 @@ export default function TrafficAuthorityDashboard() {
     });
     setIsBroadcastModalOpen(false);
   };
+
+  function formatTime(start_time: string) {
+    try {
+      const d = new Date(start_time);
+      return d.toISOString().replace("T", " ").slice(0, 16);
+    } catch { return start_time; }
+  }
 
   return (
     <div className="space-y-6">
@@ -132,7 +183,7 @@ export default function TrafficAuthorityDashboard() {
           <p className="text-gray-600 mt-1">Monitor and manage road journeys in your region.</p>
         </div>
         <div className="flex items-center gap-2">
-          <Select value={selectedRegion} onValueChange={(value: any) => setSelectedRegion(value)}>
+          <Select value={selectedRegion} onValueChange={(value: "EU" | "US" | "APAC") => setSelectedRegion(value)}>
             <SelectTrigger className="w-32">
               <SelectValue />
             </SelectTrigger>
@@ -155,10 +206,10 @@ export default function TrafficAuthorityDashboard() {
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Active Journeys" value={stats.activeJourneys} icon={MapPin} />
-        <StatCard label="Cancelled Today" value={stats.cancelledToday} icon={XCircle} />
-        <StatCard label="Road Closures" value={stats.roadClosures} icon={AlertCircle} />
-        <StatCard label="Cross-Region" value={stats.crossRegion} />
+        <StatCard label="Active Journeys" value={displayStats.activeJourneys} icon={MapPin} />
+        <StatCard label="Cancelled Today" value={displayStats.cancelledToday} icon={XCircle} />
+        <StatCard label="Road Closures" value={displayStats.roadClosures} icon={AlertCircle} />
+        <StatCard label="Cross-Region" value={displayStats.crossRegion} />
       </div>
 
       {/* Journey Volume Chart */}
@@ -190,30 +241,7 @@ export default function TrafficAuthorityDashboard() {
             Create Closure
           </Button>
         </div>
-        <div className="space-y-4">
-          {roadClosures.map((closure) => (
-            <div
-              key={closure.id}
-              className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start justify-between gap-4"
-            >
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-2">
-                  <AlertCircle className="w-5 h-5 text-red-600" />
-                  <h3 className="font-semibold text-gray-900">{closure.roadName}</h3>
-                  <RegionBadge region={closure.region} />
-                </div>
-                <p className="text-sm text-gray-700 mb-2">{closure.reason}</p>
-                <div className="flex items-center gap-4 text-xs text-gray-600">
-                  <span>Created: {closure.createdAt}</span>
-                  <span>Affected journeys: {closure.affectedJourneys}</span>
-                </div>
-              </div>
-              <Button variant="outline" size="sm" className="text-red-600 border-red-600 hover:bg-red-50">
-                Remove
-              </Button>
-            </div>
-          ))}
-        </div>
+        <p className="text-sm text-gray-500">Use the "Create Closure" button to declare a new road closure. Active closures will appear here once the backend returns them.</p>
       </div>
 
       {/* Journeys Table */}
@@ -223,7 +251,12 @@ export default function TrafficAuthorityDashboard() {
           <div className="flex items-center gap-2 w-full sm:w-auto">
             <div className="relative flex-1 sm:flex-initial">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <Input placeholder="Search..." className="pl-10 h-10 sm:w-64" />
+              <Input
+                placeholder="Search..."
+                className="pl-10 h-10 sm:w-64"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </div>
             <Button variant="outline" size="icon" className="h-10 w-10">
               <Filter className="w-4 h-4" />
@@ -231,52 +264,69 @@ export default function TrafficAuthorityDashboard() {
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Journey ID</th>
-                <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Driver</th>
-                <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Route</th>
-                <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Time</th>
-                <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Status</th>
-                <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {journeys.map((journey) => (
-                <tr key={journey.id} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-3 px-4">
-                    <span className="text-sm font-mono text-gray-900">#{journey.id}</span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className="text-sm text-gray-900">{journey.driver}</span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <div className="text-sm text-gray-900">
-                      {journey.origin} → {journey.destination}
-                    </div>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className="text-sm text-gray-600">{journey.time}</span>
-                  </td>
-                  <td className="py-3 px-4">
-                    <StatusBadge status={journey.status} />
-                  </td>
-                  <td className="py-3 px-4">
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => handleForceCancel(journey.id)}
-                    >
-                      Force Cancel
-                    </Button>
-                  </td>
+        {loadingJourneys ? (
+          <div className="space-y-3 animate-pulse">
+            {[0, 1, 2].map(i => <div key={i} className="h-12 bg-gray-100 rounded" />)}
+          </div>
+        ) : filtered.length === 0 ? (
+          <p className="text-center py-8 text-gray-500">No journeys found.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Journey ID</th>
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Driver</th>
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Route</th>
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Time</th>
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Status</th>
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 uppercase">Action</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {filtered.map((journey) => {
+                  const isEmerg = journey.vehicle_type === "EMERGENCY" || journey.status === "EMERGENCY_CONFIRMED";
+                  const displayStatus = journey.status === "EMERGENCY_CONFIRMED" ? "CONFIRMED" : journey.status;
+                  return (
+                    <tr key={journey.id} className={`border-b border-gray-100 hover:bg-gray-50 ${isEmerg ? "bg-red-50" : ""}`}>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-mono text-gray-900">#{journey.id.slice(0, 8)}</span>
+                          {isEmerg && <span className="text-xs text-red-600 font-bold">🚨</span>}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="text-sm text-gray-900 font-mono">{journey.driver_id.slice(0, 8)}…</span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="text-sm text-gray-900">
+                          {journey.origin} → {journey.destination}
+                        </div>
+                        <RegionBadge region={journey.region} />
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className="text-sm text-gray-600">{formatTime(journey.start_time)}</span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <StatusBadge status={displayStatus as "CONFIRMED" | "PENDING" | "CANCELLED" | "AUTHORITY_CANCELLED"} />
+                      </td>
+                      <td className="py-3 px-4">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          disabled={cancellingId === journey.id || journey.status === "CANCELLED" || journey.status === "AUTHORITY_CANCELLED"}
+                          onClick={() => handleForceCancel(journey.id)}
+                        >
+                          {cancellingId === journey.id ? "Cancelling..." : "Force Cancel"}
+                        </Button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Create Closure Modal */}
@@ -298,7 +348,7 @@ export default function TrafficAuthorityDashboard() {
               <Label>Region</Label>
               <Select
                 value={closureData.region}
-                onValueChange={(value: any) => setClosureData({ ...closureData, region: value })}
+                onValueChange={(value: "EU" | "US" | "APAC") => setClosureData({ ...closureData, region: value })}
               >
                 <SelectTrigger>
                   <SelectValue />
@@ -335,8 +385,8 @@ export default function TrafficAuthorityDashboard() {
             <Button variant="outline" onClick={() => setIsClosureModalOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleCreateClosure} className="bg-[#2563EB] hover:bg-[#1d4ed8]">
-              Create Closure
+            <Button onClick={handleCreateClosure} disabled={submittingClosure} className="bg-[#2563EB] hover:bg-[#1d4ed8]">
+              {submittingClosure ? "Creating..." : "Create Closure"}
             </Button>
           </DialogFooter>
         </DialogContent>

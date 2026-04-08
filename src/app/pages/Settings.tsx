@@ -1,16 +1,21 @@
 import { useState } from "react";
-import { User, Mail, Bell, MessageCircle, Shield, Lock, Trash2, ExternalLink } from "lucide-react";
+import { User, Mail, Bell, MessageCircle, Shield, Lock, Trash2, ExternalLink, LogOut } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Switch } from "../components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { toast } from "sonner";
+import { useAuth } from "../context/AuthContext";
+import { useNavigate } from "react-router";
 
 export default function Settings() {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
+
   const [emailNotifications, setEmailNotifications] = useState(true);
   const [telegramNotifications, setTelegramNotifications] = useState(false);
-  const [selectedRegion, setSelectedRegion] = useState("EU");
+  const [selectedRegion, setSelectedRegion] = useState(user?.region ?? "EU");
   const [isTelegramConnected, setIsTelegramConnected] = useState(false);
 
   const handleSaveProfile = (e: React.FormEvent) => {
@@ -44,6 +49,11 @@ export default function Settings() {
     }
   };
 
+  const handleLogout = () => {
+    logout();
+    navigate("/login");
+  };
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       {/* Header */}
@@ -62,19 +72,27 @@ export default function Settings() {
           <div className="grid sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="name">Full Name</Label>
-              <Input id="name" defaultValue="John Driver" />
+              <Input id="name" defaultValue={user?.name ?? ""} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" defaultValue="john@example.com" />
+              <Input id="email" type="email" defaultValue={user?.email ?? ""} />
             </div>
           </div>
-          <div className="space-y-2">
-            <Label>Role</Label>
-            <div className="flex items-center gap-2">
-              <Shield className="w-4 h-4 text-blue-600" />
-              <span className="text-sm font-medium text-gray-700">Driver</span>
-              <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded">Active</span>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Role</Label>
+              <div className="flex items-center gap-2 h-11 px-3 bg-gray-50 rounded border border-gray-200">
+                <Shield className="w-4 h-4 text-blue-600" />
+                <span className="text-sm font-medium text-gray-700 capitalize">{user?.role?.replace("_", " ") ?? "—"}</span>
+                <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded">Active</span>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Vehicle Type</Label>
+              <div className="flex items-center gap-2 h-11 px-3 bg-gray-50 rounded border border-gray-200">
+                <span className="text-sm text-gray-700">{user?.vehicle_type ?? "—"}</span>
+              </div>
             </div>
           </div>
           <Button type="submit" className="bg-[#2563EB] hover:bg-[#1d4ed8]">
@@ -164,7 +182,7 @@ export default function Settings() {
         <div className="space-y-4">
           <div className="space-y-2">
             <Label>Primary Region</Label>
-            <Select value={selectedRegion} onValueChange={setSelectedRegion}>
+            <Select value={selectedRegion} onValueChange={setSelectedRegion} disabled>
               <SelectTrigger className="w-full sm:w-64">
                 <SelectValue />
               </SelectTrigger>
@@ -175,10 +193,22 @@ export default function Settings() {
               </SelectContent>
             </Select>
             <p className="text-sm text-gray-600">
-              This will be used as your default region for journey bookings
+              Region is assigned by the system and cannot be changed here.
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Logout */}
+      <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <LogOut className="w-5 h-5 text-gray-600" />
+          <h2 className="text-xl font-bold text-gray-900">Session</h2>
+        </div>
+        <Button variant="outline" onClick={handleLogout} className="border-gray-300">
+          <LogOut className="w-4 h-4 mr-2" />
+          Logout
+        </Button>
       </div>
 
       {/* Change Password */}

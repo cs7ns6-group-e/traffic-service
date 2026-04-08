@@ -14,6 +14,7 @@ export interface User {
 interface AuthContextValue {
   user: User | null;
   login: (email: string, password: string) => Promise<void>;
+  register: (email: string, name: string, password: string, role: string, vehicle_type: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -61,13 +62,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (decoded?.id) setUser(decoded as User);
   }
 
+  async function register(email: string, name: string, password: string, role: string, vehicle_type: string) {
+    const res = await fetch(ENDPOINTS.REGISTER, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, name, password, role, vehicle_type }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: "Registration failed" }));
+      throw new Error(err.detail ?? "Registration failed");
+    }
+    const data = await res.json();
+    setTokens(data.access_token, data.refresh_token);
+    const decoded = decodeJwt(data.access_token);
+    if (decoded?.id) setUser(decoded as User);
+  }
+
   function logout() {
     clearTokens();
     setUser(null);
   }
 
   return (
-    <AuthContext.Provider value={{ user, login, logout }}>
+    <AuthContext.Provider value={{ user, login, register, logout }}>
       {children}
     </AuthContext.Provider>
   );

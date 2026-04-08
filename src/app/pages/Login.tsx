@@ -5,13 +5,19 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { cn } from "../components/ui/utils";
+import { useAuth } from "../context/AuthContext";
 
 export default function Login() {
   const navigate = useNavigate();
+  const { login, register } = useAuth();
+
   const [isLogin, setIsLogin] = useState(true);
   const [selectedRole, setSelectedRole] = useState<"driver" | "traffic_authority" | "admin">("driver");
   const [email, setEmail] = useState("");
+  const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const roles = [
     { value: "driver" as const, icon: User, label: "Driver" },
@@ -19,15 +25,39 @@ export default function Login() {
     { value: "admin" as const, icon: UserCog, label: "Admin" },
   ];
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const demoCredentials = [
+    { label: "Driver", email: "driver@trafficbook.com", password: "Driver123!" },
+    { label: "Emergency", email: "emergency@trafficbook.com", password: "Emergency123!" },
+    { label: "Authority", email: "authority@trafficbook.com", password: "Authority123!" },
+    { label: "Admin", email: "admin@trafficbook.com", password: "Admin123!" },
+  ];
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Mock authentication - in real app, this would validate with backend
-    if (selectedRole === "driver") {
-      navigate("/driver");
-    } else if (selectedRole === "traffic_authority") {
-      navigate("/authority");
-    } else {
-      navigate("/admin");
+    setError(null);
+    setLoading(true);
+    try {
+      if (isLogin) {
+        await login(email, password);
+        // role comes from JWT via AuthContext — read it back
+        const token = localStorage.getItem("tb_access_token");
+        if (token) {
+          const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+          const role = payload.role as string;
+          if (role === "driver") navigate("/driver");
+          else if (role === "traffic_authority") navigate("/authority");
+          else navigate("/admin");
+        }
+      } else {
+        await register(email, name, password, selectedRole, selectedRole === "driver" ? "STANDARD" : "AUTHORITY");
+        if (selectedRole === "driver") navigate("/driver");
+        else if (selectedRole === "traffic_authority") navigate("/authority");
+        else navigate("/admin");
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Authentication failed");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -57,7 +87,29 @@ export default function Login() {
               {isLogin ? "Welcome Back" : "Create Account"}
             </h2>
 
+            {error && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+                {error}
+              </div>
+            )}
+
             <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Name (register only) */}
+              {!isLogin && (
+                <div className="space-y-2">
+                  <Label htmlFor="name">Full Name</Label>
+                  <Input
+                    id="name"
+                    type="text"
+                    placeholder="Your name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                    className="h-11"
+                  />
+                </div>
+              )}
+
               {/* Email */}
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
@@ -115,9 +167,10 @@ export default function Login() {
               {/* Submit Button */}
               <Button
                 type="submit"
+                disabled={loading}
                 className="w-full h-11 bg-[#2563EB] hover:bg-[#1d4ed8] text-white font-semibold"
               >
-                {isLogin ? "Login" : "Register"}
+                {loading ? (isLogin ? "Signing in..." : "Creating account...") : (isLogin ? "Login" : "Register")}
               </Button>
             </form>
 
@@ -125,12 +178,32 @@ export default function Login() {
             <div className="mt-6 text-center">
               <button
                 type="button"
-                onClick={() => setIsLogin(!isLogin)}
+                onClick={() => { setIsLogin(!isLogin); setError(null); }}
                 className="text-sm text-[#2563EB] hover:underline"
               >
                 {isLogin ? "Don't have an account? Register" : "Already have an account? Login"}
               </button>
             </div>
+
+            {/* Demo Credentials */}
+            {isLogin && (
+              <div className="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                <p className="text-xs font-semibold text-gray-600 mb-2">Demo Credentials</p>
+                <div className="space-y-1">
+                  {demoCredentials.map((cred) => (
+                    <button
+                      key={cred.email}
+                      type="button"
+                      onClick={() => { setEmail(cred.email); setPassword(cred.password); }}
+                      className="w-full text-left text-xs text-gray-600 hover:text-[#2563EB] py-0.5 flex justify-between"
+                    >
+                      <span className="font-medium">{cred.label}</span>
+                      <span className="font-mono">{cred.email}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Footer Note */}
