@@ -26,8 +26,14 @@ interface FamousRoute {
   duration_mins: number;
 }
 
+type RouteSegment = string | { name: string; maneuver?: string; distance_m?: number; duration_s?: number };
+
+function segName(s: RouteSegment): string {
+  return typeof s === "string" ? s : (s.name ?? "");
+}
+
 interface RouteData {
-  segments: string[];
+  segments: RouteSegment[];
   distance_km: number;
   duration_mins: number;
   coordinates: [number, number][];
@@ -448,7 +454,7 @@ export default function BookJourney() {
                 {routeData.segments.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {routeData.segments.slice(0, 6).map((seg, i) => (
-                      <RoadSegmentChip key={i} roadName={seg} />
+                      <RoadSegmentChip key={i} roadName={segName(seg)} />
                     ))}
                     {routeData.segments.length > 6 && (
                       <span className="text-xs text-gray-500 self-center">+{routeData.segments.length - 6} more</span>

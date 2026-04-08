@@ -13,6 +13,9 @@ import { useAuth } from "../context/AuthContext";
 import { apiGet, apiDelete } from "../api/client";
 import { ENDPOINTS } from "../api/config";
 
+type RouteSegment = string | { name: string; maneuver?: string; distance_m?: number; duration_s?: number };
+function segName(s: RouteSegment): string { return typeof s === "string" ? s : (s.name ?? ""); }
+
 interface ApiJourney {
   id: string;
   driver_id: string;
@@ -24,7 +27,7 @@ interface ApiJourney {
   dest_region?: "EU" | "US" | "APAC";
   is_cross_region?: boolean;
   vehicle_type?: "STANDARD" | "EMERGENCY" | "AUTHORITY";
-  route_segments?: string[];
+  route_segments?: RouteSegment[];
   distance_km?: number;
   duration_mins?: number;
 }
@@ -233,7 +236,7 @@ export default function DriverDashboard() {
                     {journey.route_segments && journey.route_segments.length > 0 && (
                       <div className="flex flex-wrap gap-1 mt-2">
                         {journey.route_segments.slice(0, 3).map((seg, i) => (
-                          <RoadSegmentChip key={i} roadName={seg} />
+                          <RoadSegmentChip key={i} roadName={segName(seg)} />
                         ))}
                         {journey.route_segments.length > 3 && (
                           <span className="text-xs text-gray-400 self-center">+{journey.route_segments.length - 3}</span>

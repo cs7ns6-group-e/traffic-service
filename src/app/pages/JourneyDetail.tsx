@@ -11,6 +11,9 @@ import { toast } from "sonner";
 import { apiGet, apiDelete, apiPost } from "../api/client";
 import { ENDPOINTS } from "../api/config";
 
+type RouteSegment = string | { name: string; maneuver?: string; distance_m?: number; duration_s?: number };
+function segName(s: RouteSegment): string { return typeof s === "string" ? s : (s.name ?? ""); }
+
 interface ApiJourney {
   id: string;
   driver_id: string;
@@ -22,7 +25,7 @@ interface ApiJourney {
   dest_region?: "EU" | "US" | "APAC";
   is_cross_region?: boolean;
   vehicle_type?: "STANDARD" | "EMERGENCY" | "AUTHORITY";
-  route_segments?: string[];
+  route_segments?: RouteSegment[];
   distance_km?: number;
   duration_mins?: number;
   created_at?: string;
@@ -30,7 +33,7 @@ interface ApiJourney {
 
 interface RouteData {
   coordinates: [number, number][];
-  segments?: string[];
+  segments?: RouteSegment[];
   distance_km?: number;
   duration_mins?: number;
 }
@@ -230,7 +233,7 @@ export default function JourneyDetail() {
                   <label className="text-xs font-medium text-gray-500 uppercase">Road Segments</label>
                   <div className="flex flex-wrap gap-2 mt-2">
                     {journey.route_segments.map((seg, i) => (
-                      <RoadSegmentChip key={i} roadName={seg} />
+                      <RoadSegmentChip key={i} roadName={segName(seg)} />
                     ))}
                   </div>
                 </div>
