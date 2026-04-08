@@ -321,9 +321,14 @@ async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
                                   json={"origin": req.origin, "destination": req.destination})
             if r.status_code == 200:
                 route_data = r.json()
-                route_segments = route_data.get("segments", [])
+                # road_routing returns pre-extracted segments under "segments".
+                # Fall back to extract_segments() for older containers that
+                # return raw OSRM format without the "segments" key.
+                route_segments = route_data.get("segments") or extract_segments(route_data)
                 distance_km = route_data.get("distance_km") or None
                 duration_mins = route_data.get("duration_mins") or None
+                if not route_segments:
+                    print(f"Warning: no segments returned for {req.origin} → {req.destination}")
     except Exception as e:
         print(f"Routing error: {e}")
 
