@@ -1,11 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router";
-import { MapPin, Calendar, Clock, AlertTriangle, Route as RouteIcon, ChevronDown, Zap } from "lucide-react";
+import { Calendar, AlertTriangle, Route as RouteIcon, Zap, CheckCircle2 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { RegionBadge } from "../components/RegionBadge";
 import { RoadSegmentChip } from "../components/RoadSegmentChip";
+import { Modal } from "../components/Modal";
+import { SlotGrid, TimeSlot } from "../components/SlotGrid";
+import { PlaceSearch, Place } from "../components/PlaceSearch";
+import { RouteMap } from "../components/RouteMap";
+import { StatusBadge } from "../components/StatusBadge";
 import { toast } from "sonner";
 import { useAuth } from "../context/AuthContext";
 import { apiGet, apiPost } from "../api/client";
@@ -21,26 +26,58 @@ interface FamousRoute {
   duration_mins: number;
 }
 
-interface RoutePreview {
+interface RouteData {
   segments: string[];
-  distance_m: number;
-  duration_s: number;
   distance_km: number;
   duration_mins: number;
+  coordinates: [number, number][];
+}
+
+interface BookingResult {
+  id: string;
+  origin: string;
+  destination: string;
+  start_time: string;
+  status: string;
+  region: string;
+  distance_km?: number;
+  duration_mins?: number;
+}
+
+function tomorrow(): string {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().split("T")[0];
+}
+
+const EU_KEYWORDS = ["dublin", "london", "paris", "berlin", "cork", "belfast", "manchester", "amsterdam", "brussels", "lyon", "frankfurt", "madrid", "rome", "vienna", "ireland", "uk", "france", "germany", "spain", "italy", "austria", "netherlands", "belgium"];
+const US_KEYWORDS = ["new york", "los angeles", "chicago", "boston", "houston", "seattle", "miami", "san francisco", "washington", "usa", "united states", "california", "texas", "florida"];
+const APAC_KEYWORDS = ["singapore", "tokyo", "osaka", "sydney", "melbourne", "kuala lumpur", "bangkok", "hong kong", "seoul", "japan", "australia", "malaysia", "thailand", "korea"];
+
+function detectRegion(name: string): "EU" | "US" | "APAC" | null {
+  const l = name.toLowerCase();
+  if (US_KEYWORDS.some(k => l.includes(k))) return "US";
+  if (APAC_KEYWORDS.some(k => l.includes(k))) return "APAC";
+  if (EU_KEYWORDS.some(k => l.includes(k))) return "EU";
+  if (l.length > 2) return "EU";
+  return null;
 }
 
 export default function BookJourney() {
   const navigate = useNavigate();
   const { user } = useAuth();
 
-  const [origin, setOrigin] = useState("");
-  const [destination, setDestination] = useState("");
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("");
-  const [showRoutePreview, setShowRoutePreview] = useState(false);
-  const [routePreview, setRoutePreview] = useState<RoutePreview | null>(null);
+  const [originPlace, setOriginPlace] = useState<Place | null>(null);
+  const [destinationPlace, setDestinationPlace] = useState<Place | null>(null);
+  const [date, setDate] = useState(tomorrow());
+  const [slots, setSlots] = useState<TimeSlot[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
+  const [routeData, setRouteData] = useState<RouteData | null>(null);
   const [routeLoading, setRouteLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [successModal, setSuccessModal] = useState<BookingResult | null>(null);
+  const [conflictModal, setConflictModal] = useState(false);
   const [famousRoutes, setFamousRoutes] = useState<FamousRoute[]>([]);
   const [activeTab, setActiveTab] = useState<"EU" | "US" | "APAC">("EU");
 
@@ -48,88 +85,94 @@ export default function BookJourney() {
 
   // Fetch famous routes on mount
   useEffect(() => {
-    apiGet<FamousRoute[]>(ENDPOINTS.FAMOUS_ROUTES)
-      .then(setFamousRoutes)
-      .catch(() => {}); // non-blocking — silently ignore if unavailable
+    apiGet<FamousRoute[]>(ENDPOINTS.FAMOUS_ROUTES).then(setFamousRoutes).catch(() => {});
   }, []);
 
-  // Simple region detection (mirrors backend logic)
-  function detectRegion(loc: string): "EU" | "US" | "APAC" | null {
-    const l = loc.toLowerCase();
-    const us = ['usa','united states','new york','los angeles','chicago','houston','boston','toronto','canada','california','texas','florida','washington','san francisco','detroit'];
-    const apac = ['singapore','tokyo','japan','beijing','china','sydney','australia','mumbai','india','seoul','korea','kuala lumpur','malaysia','bangkok','thailand','osaka','melbourne'];
-    if (us.some(k => l.includes(k))) return "US";
-    if (apac.some(k => l.includes(k))) return "APAC";
-    if (l.length > 2) return "EU"; // default EU for non-empty strings
-    return null;
-  }
+  // Fetch slots when origin + destination + date all set
+  const fetchSlots = useCallback(() => {
+    if (!originPlace || !destinationPlace || !date) return;
+    setSlotsLoading(true);
+    apiGet<TimeSlot[]>(
+      `${ENDPOINTS.CONFLICTS_SLOTS}?origin=${encodeURIComponent(originPlace.name)}&destination=${encodeURIComponent(destinationPlace.name)}&date=${date}`
+    )
+      .then(setSlots)
+      .catch(() => {
+        // Fall back to all slots available
+        const fallback: TimeSlot[] = [];
+        for (let h = 6; h <= 22; h++) {
+          for (const m of [0, 30]) {
+            if (h === 22 && m === 30) break;
+            fallback.push({ slot: `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`, available: true });
+          }
+        }
+        setSlots(fallback);
+      })
+      .finally(() => setSlotsLoading(false));
+  }, [originPlace, destinationPlace, date]);
 
-  const originRegion = detectRegion(origin);
-  const destinationRegion = detectRegion(destination);
+  useEffect(() => {
+    if (originPlace && destinationPlace && date) {
+      setSelectedSlot(null);
+      fetchSlots();
+    } else {
+      setSlots([]);
+    }
+  }, [originPlace, destinationPlace, date, fetchSlots]);
+
+  // Auto-refresh slots every 30s
+  useEffect(() => {
+    if (!originPlace || !destinationPlace || !date) return;
+    const id = setInterval(fetchSlots, 30000);
+    return () => clearInterval(id);
+  }, [originPlace, destinationPlace, date, fetchSlots]);
+
+  // Fetch route when origin + destination set
+  useEffect(() => {
+    if (!originPlace || !destinationPlace) { setRouteData(null); return; }
+    setRouteLoading(true);
+    apiPost<RouteData>(ENDPOINTS.ROUTE, { origin: originPlace.name, destination: destinationPlace.name })
+      .then(setRouteData)
+      .catch(() => setRouteData(null))
+      .finally(() => setRouteLoading(false));
+  }, [originPlace, destinationPlace]);
+
+  const originRegion = originPlace ? detectRegion(originPlace.name) : null;
+  const destinationRegion = destinationPlace ? detectRegion(destinationPlace.name) : null;
   const isCrossRegion = originRegion && destinationRegion && originRegion !== destinationRegion;
 
-  const routesByRegion = famousRoutes.filter(r => r.region === activeTab);
-
   function handleRouteCardClick(route: FamousRoute) {
-    setOrigin(route.origin);
-    setDestination(route.destination);
-    setShowRoutePreview(false);
-    setRoutePreview(null);
-  }
-
-  async function handleShowRoutePreview() {
-    if (!origin || !destination) {
-      toast.error("Please enter both origin and destination");
-      return;
-    }
-    setRouteLoading(true);
-    setShowRoutePreview(true);
-    try {
-      const data = await apiPost<RoutePreview>(ENDPOINTS.ROUTE, { origin, destination });
-      setRoutePreview({
-        segments: data.segments ?? [],
-        distance_m: data.distance_m ?? 0,
-        duration_s: data.duration_s ?? 0,
-        distance_km: data.distance_km ?? Math.round((data.distance_m ?? 0) / 100) / 10,
-        duration_mins: data.duration_mins ?? Math.round((data.duration_s ?? 0) / 60),
-      });
-    } catch {
-      setRoutePreview(null);
-    } finally {
-      setRouteLoading(false);
-    }
+    setOriginPlace({ name: route.origin, lat: 0, lon: 0 });
+    setDestinationPlace({ name: route.destination, lat: 0, lon: 0 });
+    setSelectedSlot(null);
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!date || !time) { toast.error("Please select a date and time"); return; }
+    if (!originPlace || !destinationPlace) { toast.error("Please select origin and destination"); return; }
+    if (!selectedSlot) { toast.error("Please select a time slot"); return; }
 
-    const start_time = `${date}T${time}:00`;
+    const start_time = `${date}T${selectedSlot}:00`;
     setSubmitting(true);
     try {
-      const result = await apiPost<{ id: string; status: string }>(ENDPOINTS.JOURNEYS, {
-        origin,
-        destination,
+      const result = await apiPost<BookingResult>(ENDPOINTS.JOURNEYS, {
+        origin: originPlace.name,
+        destination: destinationPlace.name,
         start_time,
       });
-
-      if (result.status === "EMERGENCY_CONFIRMED") {
-        toast.success("🚨 Emergency journey instantly approved!", {
-          description: `Journey ID: ${result.id.slice(0, 8)} — Conflict detection bypassed.`,
-        });
-      } else {
-        toast.success("Journey booking confirmed!", {
-          description: `Journey ID: ${result.id.slice(0, 8)} — Status: ${result.status}`,
-        });
-      }
-      setTimeout(() => navigate("/driver"), 1500);
+      setSuccessModal(result);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Booking failed";
-      toast.error("Booking failed", { description: msg });
+      if (msg.includes("409") || msg.toLowerCase().includes("conflict") || msg.toLowerCase().includes("already")) {
+        setConflictModal(true);
+      } else {
+        toast.error("Booking failed", { description: msg });
+      }
     } finally {
       setSubmitting(false);
     }
   }
+
+  const routesByRegion = famousRoutes.filter(r => r.region === activeTab);
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
@@ -144,9 +187,9 @@ export default function BookJourney() {
         <div className="bg-red-50 border border-red-300 rounded-lg p-4 flex items-start gap-3">
           <Zap className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
           <div>
-            <h4 className="font-semibold text-red-900">🚨 EMERGENCY VEHICLE — Instant Approval</h4>
+            <h4 className="font-semibold text-red-900">🚨 Emergency Vehicle — All slots available</h4>
             <p className="text-sm text-red-800 mt-1">
-              All journeys are instantly approved. Conflict detection and authority approval are bypassed.
+              Your journeys bypass conflict detection. All time slots are available to you.
             </p>
           </div>
         </div>
@@ -156,8 +199,6 @@ export default function BookJourney() {
       {famousRoutes.length > 0 && (
         <div className="bg-white rounded-lg border border-gray-200 p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">Popular Routes</h2>
-
-          {/* Region Tabs */}
           <div className="flex gap-2 mb-4">
             {(["EU", "US", "APAC"] as const).map(region => (
               <button
@@ -174,7 +215,6 @@ export default function BookJourney() {
               </button>
             ))}
           </div>
-
           <div className="grid sm:grid-cols-2 gap-3">
             {routesByRegion.map(route => (
               <button
@@ -184,10 +224,8 @@ export default function BookJourney() {
                 className="text-left p-3 rounded-lg border border-gray-200 hover:border-[#2563EB] hover:bg-blue-50 transition-all"
               >
                 <p className="font-medium text-gray-900 text-sm">{route.name}</p>
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {route.origin} → {route.destination}
-                </p>
-                <div className="flex gap-3 mt-2 text-xs text-gray-600">
+                <p className="text-xs text-gray-500 mt-0.5">{route.origin} → {route.destination}</p>
+                <div className="flex gap-3 mt-2 text-xs text-gray-600 items-center">
                   <span>{route.distance_km} km</span>
                   <span>~{route.duration_mins} min</span>
                   <RegionBadge region={route.region} />
@@ -198,157 +236,135 @@ export default function BookJourney() {
         </div>
       )}
 
-      {/* Form Card */}
+      {/* Form */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">
         <form onSubmit={handleSubmit} className="space-y-6">
+
           {/* Origin */}
           <div className="space-y-2">
-            <Label htmlFor="origin">Origin</Label>
-            <div className="relative">
-              <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-green-600" />
-              <Input
-                id="origin"
-                placeholder="Enter starting location"
-                value={origin}
-                onChange={(e) => { setOrigin(e.target.value); setShowRoutePreview(false); setRoutePreview(null); }}
-                className="pl-11 h-12"
-                required
-              />
-              {originRegion && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <RegionBadge region={originRegion} />
-                </div>
-              )}
-            </div>
+            <Label>Origin</Label>
+            <PlaceSearch
+              value={originPlace}
+              onChange={(p) => { setOriginPlace(p); setSelectedSlot(null); }}
+              placeholder="Enter starting location"
+              pinColor="green"
+            />
+            {originRegion && (
+              <div className="flex items-center gap-2 mt-1">
+                <RegionBadge region={originRegion} />
+                <span className="text-xs text-gray-500">Detected region</span>
+              </div>
+            )}
           </div>
 
           {/* Destination */}
           <div className="space-y-2">
-            <Label htmlFor="destination">Destination</Label>
-            <div className="relative">
-              <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-red-600" />
-              <Input
-                id="destination"
-                placeholder="Enter destination"
-                value={destination}
-                onChange={(e) => { setDestination(e.target.value); setShowRoutePreview(false); setRoutePreview(null); }}
-                className="pl-11 h-12"
-                required
-              />
-              {destinationRegion && (
-                <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                  <RegionBadge region={destinationRegion} />
-                </div>
-              )}
-            </div>
+            <Label>Destination</Label>
+            <PlaceSearch
+              value={destinationPlace}
+              onChange={(p) => { setDestinationPlace(p); setSelectedSlot(null); }}
+              placeholder="Enter destination"
+              pinColor="red"
+            />
+            {destinationRegion && (
+              <div className="flex items-center gap-2 mt-1">
+                <RegionBadge region={destinationRegion} />
+                <span className="text-xs text-gray-500">Detected region</span>
+              </div>
+            )}
           </div>
 
-          {/* Cross-Region Warning */}
+          {/* Cross-Region Banner */}
           {isCrossRegion && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
               <div>
-                <h4 className="font-semibold text-amber-900">Cross-Region Journey</h4>
+                <h4 className="font-semibold text-amber-900">Cross-region journey: {originRegion} → {destinationRegion}</h4>
                 <p className="text-sm text-amber-800 mt-1">
-                  This journey crosses into {destinationRegion}. The destination region will be notified and must approve this journey.
+                  Both regions will be notified via RabbitMQ
                 </p>
               </div>
             </div>
           )}
 
-          {/* Date & Time */}
-          <div className="grid sm:grid-cols-2 gap-4">
+          {/* Leaflet Map */}
+          {(originPlace || destinationPlace) && (
             <div className="space-y-2">
-              <Label htmlFor="date">Date</Label>
-              <div className="relative">
-                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <Input
-                  id="date"
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="pl-11 h-12"
-                  required
-                  min={new Date().toISOString().split('T')[0]}
-                />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="time">Time</Label>
-              <div className="relative">
-                <Clock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
-                <Input
-                  id="time"
-                  type="time"
-                  value={time}
-                  onChange={(e) => setTime(e.target.value)}
-                  className="pl-11 h-12"
-                  required
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Route Preview Button */}
-          {!showRoutePreview && origin && destination && (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleShowRoutePreview}
-              className="w-full"
-              disabled={routeLoading}
-            >
-              <RouteIcon className="w-4 h-4 mr-2" />
-              {routeLoading ? "Loading route..." : "Preview Route"}
-            </Button>
-          )}
-
-          {/* Route Preview */}
-          {showRoutePreview && (
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="font-semibold text-gray-900 flex items-center gap-2">
-                  <RouteIcon className="w-5 h-5 text-[#2563EB]" />
-                  Estimated Route
+                  <RouteIcon className="w-4 h-4 text-[#2563EB]" />
+                  Route Preview
                 </h3>
-              </div>
-
-              {routeLoading ? (
-                <div className="animate-pulse space-y-2">
-                  <div className="h-4 bg-gray-200 rounded w-1/2" />
-                  <div className="h-4 bg-gray-200 rounded w-1/3" />
-                </div>
-              ) : routePreview ? (
-                <>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-xs text-gray-500 uppercase font-medium">Distance</p>
-                      <p className="text-lg font-bold text-gray-900 mt-1">{routePreview.distance_km} km</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 uppercase font-medium">Duration</p>
-                      <p className="text-lg font-bold text-gray-900 mt-1">{routePreview.duration_mins} min</p>
-                    </div>
+                {routeData && (
+                  <div className="flex gap-4 text-sm text-gray-600">
+                    <span className="font-medium">{routeData.distance_km} km</span>
+                    <span className="font-medium">{routeData.duration_mins} min</span>
                   </div>
-                  {routePreview.segments.length > 0 && (
-                    <div>
-                      <button
-                        type="button"
-                        className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-3 hover:text-gray-900"
-                      >
-                        Road Segments ({routePreview.segments.length})
-                        <ChevronDown className="w-4 h-4" />
-                      </button>
-                      <div className="flex flex-wrap gap-2">
-                        {routePreview.segments.slice(0, 10).map((segment, index) => (
-                          <RoadSegmentChip key={index} roadName={typeof segment === "string" ? segment : (segment as { name?: string })?.name ?? ""} />
-                        ))}
-                      </div>
+                )}
+              </div>
+              {routeLoading ? (
+                <div className="h-[220px] bg-gray-100 rounded-lg animate-pulse flex items-center justify-center text-gray-400 text-sm">
+                  Loading map…
+                </div>
+              ) : routeData?.coordinates?.length ? (
+                <>
+                  <RouteMap coordinates={routeData.coordinates} />
+                  {routeData.segments.length > 0 && (
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {routeData.segments.slice(0, 8).map((seg, i) => (
+                        <RoadSegmentChip key={i} roadName={seg} />
+                      ))}
+                      {routeData.segments.length > 8 && (
+                        <span className="text-xs text-gray-500 self-center">+{routeData.segments.length - 8} more</span>
+                      )}
                     </div>
                   )}
                 </>
               ) : (
-                <p className="text-sm text-gray-500">Route preview unavailable — you can still book.</p>
+                <div className="h-[220px] bg-gray-100 rounded-lg flex items-center justify-center text-gray-400 text-sm">
+                  Map unavailable — you can still book
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Date */}
+          <div className="space-y-2">
+            <Label htmlFor="date">Date</Label>
+            <div className="relative">
+              <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <Input
+                id="date"
+                type="date"
+                value={date}
+                onChange={(e) => { setDate(e.target.value); setSelectedSlot(null); }}
+                className="pl-11 h-12"
+                required
+                min={new Date().toISOString().split("T")[0]}
+              />
+            </div>
+          </div>
+
+          {/* Time Slot Grid */}
+          {originPlace && destinationPlace && date && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label>Select Time Slot</Label>
+                {selectedSlot && (
+                  <span className="text-sm font-medium text-[#2563EB]">Selected: {selectedSlot}</span>
+                )}
+              </div>
+              {slotsLoading ? (
+                <SlotGrid slots={[]} selectedSlot={null} onSelect={() => {}} loading />
+              ) : slots.length > 0 ? (
+                <SlotGrid
+                  slots={slots}
+                  selectedSlot={selectedSlot}
+                  onSelect={setSelectedSlot}
+                  forceAllAvailable={isEmergency}
+                />
+              ) : (
+                <p className="text-sm text-gray-500 text-center py-4">No slots available</p>
               )}
             </div>
           )}
@@ -366,11 +382,11 @@ export default function BookJourney() {
             </Button>
             <Button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !selectedSlot}
               className={`flex-1 ${isEmergency ? "bg-red-600 hover:bg-red-700" : "bg-[#2563EB] hover:bg-[#1d4ed8]"}`}
             >
               {submitting
-                ? "Booking..."
+                ? "Booking…"
                 : isEmergency
                 ? "Book Emergency Journey"
                 : "Request Journey Approval"}
@@ -389,6 +405,68 @@ export default function BookJourney() {
           <li>• Cross-region journeys require approval from both regions</li>
         </ul>
       </div>
+
+      {/* Success Modal */}
+      <Modal isOpen={!!successModal} onClose={() => { setSuccessModal(null); navigate("/driver"); }}>
+        {successModal && (
+          <div className="text-center space-y-4">
+            <CheckCircle2 className="w-16 h-16 text-green-500 mx-auto" />
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">Journey Booked ✅</h2>
+              <p className="text-sm text-gray-500 mt-1 font-mono">ID: {successModal.id.slice(0, 8)}</p>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-4 text-left space-y-2">
+              <p className="text-sm text-gray-700">
+                <span className="font-medium">{successModal.origin}</span>
+                <span className="text-gray-400 mx-2">→</span>
+                <span className="font-medium">{successModal.destination}</span>
+              </p>
+              <p className="text-sm text-gray-600">
+                {new Date(successModal.start_time).toLocaleString("en-GB", {
+                  weekday: "short", day: "numeric", month: "short", year: "numeric",
+                  hour: "2-digit", minute: "2-digit",
+                })}
+              </p>
+              <div className="flex items-center gap-2 mt-2">
+                <StatusBadge status={(successModal.status === "EMERGENCY_CONFIRMED" ? "CONFIRMED" : successModal.status) as "CONFIRMED" | "PENDING" | "CANCELLED" | "AUTHORITY_CANCELLED"} />
+                <RegionBadge region={successModal.region as "EU" | "US" | "APAC"} />
+              </div>
+              {(successModal.distance_km || successModal.duration_mins) && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {successModal.distance_km} km · {successModal.duration_mins} min
+                </p>
+              )}
+            </div>
+            <p className="text-sm text-gray-500">📱 Telegram notification sent</p>
+            <Button
+              onClick={() => { setSuccessModal(null); navigate("/driver"); }}
+              className="w-full bg-[#2563EB] hover:bg-[#1d4ed8]"
+            >
+              View Dashboard
+            </Button>
+          </div>
+        )}
+      </Modal>
+
+      {/* Conflict Modal */}
+      <Modal isOpen={conflictModal} onClose={() => setConflictModal(false)}>
+        <div className="text-center space-y-4">
+          <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto">
+            <span className="text-3xl">❌</span>
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Slot Already Booked</h2>
+            <p className="text-sm text-gray-600 mt-2">You already have a journey at this time</p>
+          </div>
+          <Button
+            onClick={() => setConflictModal(false)}
+            variant="outline"
+            className="w-full"
+          >
+            Choose a Different Slot
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }
