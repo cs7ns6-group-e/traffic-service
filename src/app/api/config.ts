@@ -22,11 +22,16 @@ export const ENDPOINTS = {
   AUTHORITY_JOURNEYS: "/authority/journeys",
   AUTHORITY_CANCEL:   (id: string) => `/authority/cancel/${id}`,
   AUTHORITY_CLOSURE:  "/authority/closure",
+  AUTHORITY_CLOSURES: "/authority/closures",
   AUTHORITY_STATS:    "/authority/stats",
 
   ADMIN_HEALTH:      "/admin/health",
   ADMIN_STATS:       "/admin/stats",
   ADMIN_ALL_REGIONS: "/admin/all-regions",
+  ADMIN_LATENCY:     "/admin/latency",
   ADMIN_QUEUE:       "/admin/queue",
   ADMIN_CACHE:       "/admin/cache",
+
+  CONFLICTS_SLOTS: "/conflicts/slots",
+  SEARCH:          "/search",
 } as const;

@@ -1,12 +1,14 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router";
-import { MapPin, Calendar, ArrowRight, CheckCircle2, Clock, XCircle, AlertCircle, Zap } from "lucide-react";
+import { MapPin, Calendar, ArrowRight, CheckCircle2, Clock, XCircle, Zap } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { StatusBadge } from "../components/StatusBadge";
 import { RegionBadge } from "../components/RegionBadge";
 import { RoadSegmentChip } from "../components/RoadSegmentChip";
+import { RouteMap } from "../components/RouteMap";
+import { Modal } from "../components/Modal";
 import { toast } from "sonner";
-import { apiGet, apiDelete } from "../api/client";
+import { apiGet, apiDelete, apiPost } from "../api/client";
 import { ENDPOINTS } from "../api/config";
 
 interface ApiJourney {
@@ -17,69 +19,85 @@ interface ApiJourney {
   start_time: string;
   status: "CONFIRMED" | "PENDING" | "CANCELLED" | "AUTHORITY_CANCELLED" | "EMERGENCY_CONFIRMED";
   region: "EU" | "US" | "APAC";
+  dest_region?: "EU" | "US" | "APAC";
+  is_cross_region?: boolean;
   vehicle_type?: "STANDARD" | "EMERGENCY" | "AUTHORITY";
+  route_segments?: string[];
   distance_km?: number;
   duration_mins?: number;
-  road_segments?: string[];
   created_at?: string;
+}
+
+interface RouteData {
+  coordinates: [number, number][];
+  segments?: string[];
+  distance_km?: number;
+  duration_mins?: number;
 }
 
 function buildTimeline(status: ApiJourney["status"]) {
   if (status === "EMERGENCY_CONFIRMED") {
     return [
-      { status: "Submitted", icon: CheckCircle2, color: "text-green-600", bgColor: "bg-green-100", completed: true },
-      { status: "Emergency Bypass — Instantly Approved", icon: Zap, color: "text-red-600", bgColor: "bg-red-100", completed: true },
+      { label: "Submitted", done: true, icon: CheckCircle2, green: true },
+      { label: "Emergency bypass — Instantly approved", done: true, icon: Zap, green: false, red: true },
     ];
   }
-  const steps = [
-    { status: "Submitted", completed: true },
-    { status: "Conflict Check", completed: status !== "PENDING" },
-    { status: "Authority Review", completed: status === "CONFIRMED" || status === "AUTHORITY_CANCELLED" },
-    { status: status === "AUTHORITY_CANCELLED" ? "Authority Cancelled" : status === "CANCELLED" ? "Cancelled" : "Approved", completed: status === "CONFIRMED" || status === "AUTHORITY_CANCELLED" || status === "CANCELLED" },
+  return [
+    { label: "Submitted", done: true, icon: CheckCircle2, green: true },
+    { label: "Conflict Check", done: status !== "PENDING", icon: status !== "PENDING" ? CheckCircle2 : Clock, green: status !== "PENDING" },
+    { label: "Authority Review", done: status === "CONFIRMED" || status === "AUTHORITY_CANCELLED", icon: status === "AUTHORITY_CANCELLED" ? XCircle : (status === "CONFIRMED" ? CheckCircle2 : Clock), green: status === "CONFIRMED" },
+    {
+      label: status === "AUTHORITY_CANCELLED" ? "Authority Cancelled" : status === "CANCELLED" ? "Cancelled" : "Approved",
+      done: status === "CONFIRMED" || status === "AUTHORITY_CANCELLED" || status === "CANCELLED",
+      icon: (status === "CONFIRMED") ? CheckCircle2 : (status === "CANCELLED" || status === "AUTHORITY_CANCELLED") ? XCircle : Clock,
+      green: status === "CONFIRMED",
+    },
   ];
-  return steps.map(s => ({
-    ...s,
-    icon: s.completed ? (s.status.includes("Cancelled") ? XCircle : CheckCircle2) : Clock,
-    color: s.completed ? (s.status.includes("Cancelled") ? "text-red-600" : "text-green-600") : "text-gray-400",
-    bgColor: s.completed ? (s.status.includes("Cancelled") ? "bg-red-100" : "bg-green-100") : "bg-gray-100",
-  }));
 }
 
-function parseStartTime(start_time: string) {
+function fmt(iso: string) {
   try {
-    const d = new Date(start_time);
-    return { date: d.toISOString().split("T")[0], time: d.toTimeString().slice(0, 5) };
-  } catch { return { date: start_time, time: "" }; }
+    return new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  } catch { return iso; }
 }
 
 export default function JourneyDetail() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const [journey, setJourney] = useState<ApiJourney | null>(null);
+  const [routeData, setRouteData] = useState<RouteData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isCancelling, setIsCancelling] = useState(false);
+  const [cancelModal, setCancelModal] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     if (!id) return;
     apiGet<ApiJourney>(ENDPOINTS.JOURNEY(id))
-      .then(setJourney)
+      .then((j) => {
+        setJourney(j);
+        // Fetch route for map
+        apiPost<RouteData>(ENDPOINTS.ROUTE, { origin: j.origin, destination: j.destination })
+          .then(setRouteData)
+          .catch(() => {});
+      })
       .catch(() => toast.error("Failed to load journey"))
       .finally(() => setLoading(false));
   }, [id]);
 
-  const handleCancelJourney = async () => {
+  async function handleCancel() {
     if (!id) return;
-    setIsCancelling(true);
+    setCancelling(true);
     try {
       await apiDelete(ENDPOINTS.JOURNEY(id));
-      toast.success("Journey cancelled successfully");
+      toast.success("Journey cancelled");
       navigate("/driver");
     } catch (err: unknown) {
-      toast.error("Cancel failed", { description: err instanceof Error ? err.message : "Unknown error" });
+      toast.error("Cancel failed", { description: err instanceof Error ? err.message : "Unknown" });
     } finally {
-      setIsCancelling(false);
+      setCancelling(false);
+      setCancelModal(false);
     }
-  };
+  }
 
   if (loading) {
     return (
@@ -95,13 +113,14 @@ export default function JourneyDetail() {
       <div className="max-w-5xl mx-auto">
         <div className="bg-white rounded-lg border border-gray-200 p-12 text-center text-gray-500">
           Journey not found.
+          <div className="mt-4">
+            <Button variant="outline" onClick={() => navigate("/driver")}>Back to Dashboard</Button>
+          </div>
         </div>
       </div>
     );
   }
 
-  const { date, time } = parseStartTime(journey.start_time);
-  const createdAt = journey.created_at ? parseStartTime(journey.created_at) : null;
   const isEmergency = journey.vehicle_type === "EMERGENCY" || journey.status === "EMERGENCY_CONFIRMED";
   const canCancel = (journey.status === "CONFIRMED" || journey.status === "EMERGENCY_CONFIRMED") && new Date(journey.start_time) > new Date();
   const displayStatus = journey.status === "EMERGENCY_CONFIRMED" ? "CONFIRMED" : journey.status;
@@ -113,7 +132,7 @@ export default function JourneyDetail() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Journey Details</h1>
-          <p className="text-gray-600 mt-1">#{journey.id}</p>
+          <p className="text-gray-600 mt-1 font-mono">#{journey.id}</p>
         </div>
         <Button variant="outline" onClick={() => navigate("/driver")}>
           Back to Dashboard
@@ -134,14 +153,18 @@ export default function JourneyDetail() {
       <div className="grid lg:grid-cols-3 gap-6">
         {/* Main Info */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Journey Info Card */}
+
+          {/* Info Card */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="flex items-start justify-between mb-6">
               <div>
                 <h2 className="text-xl font-bold text-gray-900 mb-2">Journey Information</h2>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <RegionBadge region={journey.region} />
                   <StatusBadge status={displayStatus as "CONFIRMED" | "PENDING" | "CANCELLED" | "AUTHORITY_CANCELLED"} />
+                  {journey.is_cross_region && (
+                    <span className="text-xs font-medium px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full border border-blue-200">Cross-Region</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -163,21 +186,21 @@ export default function JourneyDetail() {
                 </div>
               </div>
 
-              {/* Date & Time */}
+              {/* Scheduled Time */}
               <div className="grid sm:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-medium text-gray-500 uppercase">Scheduled Time</label>
                   <div className="flex items-center gap-2 mt-2">
                     <Calendar className="w-4 h-4 text-gray-400" />
-                    <span className="text-gray-900">{date} at {time}</span>
+                    <span className="text-gray-900">{fmt(journey.start_time)}</span>
                   </div>
                 </div>
-                {createdAt && (
+                {journey.created_at && (
                   <div>
                     <label className="text-xs font-medium text-gray-500 uppercase">Created</label>
                     <div className="flex items-center gap-2 mt-2">
                       <Clock className="w-4 h-4 text-gray-400" />
-                      <span className="text-gray-900">{createdAt.date} at {createdAt.time}</span>
+                      <span className="text-gray-900">{fmt(journey.created_at)}</span>
                     </div>
                   </div>
                 )}
@@ -202,12 +225,12 @@ export default function JourneyDetail() {
               )}
 
               {/* Road Segments */}
-              {journey.road_segments && journey.road_segments.length > 0 && (
+              {journey.route_segments && journey.route_segments.length > 0 && (
                 <div className="pt-4 border-t">
                   <label className="text-xs font-medium text-gray-500 uppercase">Road Segments</label>
                   <div className="flex flex-wrap gap-2 mt-2">
-                    {journey.road_segments.map((segment, index) => (
-                      <RoadSegmentChip key={index} roadName={segment} />
+                    {journey.route_segments.map((seg, i) => (
+                      <RoadSegmentChip key={i} roadName={seg} />
                     ))}
                   </div>
                 </div>
@@ -219,34 +242,33 @@ export default function JourneyDetail() {
               <div className="mt-6 pt-6 border-t">
                 <Button
                   variant="destructive"
-                  onClick={handleCancelJourney}
-                  disabled={isCancelling}
+                  onClick={() => setCancelModal(true)}
                   className="w-full sm:w-auto"
                 >
-                  {isCancelling ? "Cancelling..." : "Cancel Journey"}
+                  Cancel Journey
                 </Button>
               </div>
             )}
           </div>
 
-          {/* Status Timeline */}
+          {/* Timeline */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <h3 className="text-lg font-bold text-gray-900 mb-6">Status Timeline</h3>
             <div className="space-y-4">
               {timeline.map((item, index) => {
                 const Icon = item.icon;
+                const colorClass = "red" in item && item.red ? "text-red-600" : item.green ? "text-green-600" : "text-gray-400";
+                const bgClass = "red" in item && item.red ? "bg-red-100" : item.green ? "bg-green-100" : "bg-gray-100";
                 return (
                   <div key={index} className="flex gap-4">
                     <div className="flex flex-col items-center">
-                      <div className={`w-10 h-10 rounded-full ${item.bgColor} flex items-center justify-center`}>
-                        <Icon className={`w-5 h-5 ${item.color}`} />
+                      <div className={`w-10 h-10 rounded-full ${bgClass} flex items-center justify-center`}>
+                        <Icon className={`w-5 h-5 ${colorClass}`} />
                       </div>
-                      {index < timeline.length - 1 && (
-                        <div className="w-0.5 h-8 bg-gray-200 my-1" />
-                      )}
+                      {index < timeline.length - 1 && <div className="w-0.5 h-8 bg-gray-200 my-1" />}
                     </div>
                     <div className="flex-1 pb-4">
-                      <p className="font-medium text-gray-900">{item.status}</p>
+                      <p className="font-medium text-gray-900">{item.label}</p>
                     </div>
                   </div>
                 );
@@ -257,38 +279,63 @@ export default function JourneyDetail() {
 
         {/* Sidebar */}
         <div className="space-y-6">
-          {/* Map Placeholder */}
+          {/* Map */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Route Map</h3>
-            <div className="aspect-square bg-gray-100 rounded-lg flex items-center justify-center">
-              <div className="text-center text-gray-500">
-                <MapPin className="w-12 h-12 mx-auto mb-2 text-gray-400" />
-                <p className="text-sm">Map Preview</p>
-                <p className="text-xs">Route visualization</p>
+            {routeData?.coordinates?.length ? (
+              <RouteMap coordinates={routeData.coordinates} />
+            ) : (
+              <div className="h-[220px] bg-gray-100 rounded-lg flex items-center justify-center">
+                <div className="text-center text-gray-500">
+                  <MapPin className="w-10 h-10 mx-auto mb-2 text-gray-400" />
+                  <p className="text-sm">Map Preview</p>
+                </div>
               </div>
-            </div>
+            )}
           </div>
 
-          {/* Journey Info Summary */}
+          {/* Summary */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Summary</h3>
-            <div className="space-y-3">
-              <div className="pb-3 border-b">
-                <p className="text-sm font-medium text-gray-900">Status</p>
-                <p className="text-xs text-gray-600 mt-1">{journey.status}</p>
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between pb-2 border-b">
+                <span className="text-gray-500">Status</span>
+                <StatusBadge status={displayStatus as "CONFIRMED" | "PENDING" | "CANCELLED" | "AUTHORITY_CANCELLED"} />
               </div>
-              <div className="pb-3 border-b">
-                <p className="text-sm font-medium text-gray-900">Region</p>
-                <p className="text-xs text-gray-600 mt-1">{journey.region}</p>
+              <div className="flex justify-between pb-2 border-b">
+                <span className="text-gray-500">Region</span>
+                <RegionBadge region={journey.region} />
               </div>
+              {journey.is_cross_region && journey.dest_region && (
+                <div className="flex justify-between pb-2 border-b">
+                  <span className="text-gray-500">Dest. Region</span>
+                  <RegionBadge region={journey.dest_region} />
+                </div>
+              )}
               <div>
-                <p className="text-sm font-medium text-gray-900">Journey ID</p>
-                <p className="text-xs font-mono text-gray-600 mt-1">{journey.id}</p>
+                <span className="text-gray-500">Journey ID</span>
+                <p className="font-mono text-xs text-gray-700 mt-1 break-all">{journey.id}</p>
               </div>
             </div>
           </div>
         </div>
       </div>
+
+      {/* Cancel Modal */}
+      <Modal isOpen={cancelModal} onClose={() => setCancelModal(false)} title="Cancel Journey">
+        <div className="space-y-4">
+          <p className="text-gray-700">
+            Cancel your journey from <span className="font-medium">{journey.origin}</span> to <span className="font-medium">{journey.destination}</span>?
+          </p>
+          <p className="text-sm text-gray-500">{fmt(journey.start_time)}</p>
+          <div className="flex gap-3 pt-2">
+            <Button variant="outline" onClick={() => setCancelModal(false)} disabled={cancelling} className="flex-1">Keep Journey</Button>
+            <Button variant="destructive" onClick={handleCancel} disabled={cancelling} className="flex-1">
+              {cancelling ? "Cancelling…" : "Yes, Cancel"}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
