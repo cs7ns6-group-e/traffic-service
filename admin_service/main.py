@@ -79,6 +79,56 @@ async def health_check(user=Depends(verify_token)):
     return {"services": list(results), "region": REGION, "timestamp": datetime.utcnow().isoformat()}
 
 
+@app.get("/admin/latency")
+async def latency_check(user=Depends(require_role("admin", "traffic_authority"))):
+    """Measure P50/P95 latency for all services by sampling /health 5 times each."""
+    async def measure_service(name: str, port: int) -> dict:
+        samples = []
+        last_status = "unknown"
+        async with httpx.AsyncClient() as client:
+            for _ in range(5):
+                t0 = time.time()
+                try:
+                    r = await asyncio.wait_for(
+                        client.get(f"http://{name}:{port}/health"),
+                        timeout=3,
+                    )
+                    elapsed_ms = int((time.time() - t0) * 1000)
+                    samples.append(elapsed_ms)
+                    last_status = "ok" if r.status_code == 200 else "degraded"
+                except Exception:
+                    elapsed_ms = int((time.time() - t0) * 1000)
+                    samples.append(elapsed_ms)
+                    last_status = "down"
+        samples.sort()
+        n = len(samples)
+        p50 = samples[n // 2] if samples else 0
+        p95 = samples[int(n * 0.95)] if samples else 0
+        return {
+            "name": name,
+            "p50_ms": p50,
+            "p95_ms": p95,
+            "last_response_ms": samples[-1] if samples else 0,
+            "status": last_status,
+        }
+
+    results = await asyncio.gather(
+        *[measure_service(name, port) for name, port in SERVICES]
+    )
+    results_list = list(results)
+    all_p95 = [r["p95_ms"] for r in results_list if r["status"] != "down"]
+    max_p95 = max(all_p95) if all_p95 else 0
+    return {
+        "region": REGION,
+        "timestamp": datetime.utcnow().isoformat(),
+        "services": results_list,
+        "sla": {
+            "target_p95_ms": 500,
+            "passing": max_p95 <= 500,
+        },
+    }
+
+
 @app.get("/admin/stats")
 def stats(user=Depends(verify_token)):
     conn = get_conn()

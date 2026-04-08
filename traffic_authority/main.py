@@ -1,5 +1,6 @@
 import os
 import json
+import uuid
 from datetime import datetime
 
 import psycopg2
@@ -17,6 +18,9 @@ JWT_SECRET = os.getenv("JWT_SECRET", "secret")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 DATABASE_URL = os.getenv("DATABASE_URL")
 RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
+
+CANCELABLE_STATUSES = {"CONFIRMED", "PENDING"}
+ALREADY_DONE_STATUSES = {"CANCELLED", "AUTHORITY_CANCELLED"}
 
 
 def get_conn():
@@ -36,6 +40,8 @@ def init_db():
             created_by TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT NOW()
         );
+        ALTER TABLE journeys ADD COLUMN IF NOT EXISTS cancelled_reason TEXT;
+        ALTER TABLE journeys ADD COLUMN IF NOT EXISTS driver_email TEXT;
     """)
     conn.commit()
     cur.close()
@@ -86,8 +92,10 @@ async def publish_event(queue_name: str, payload: dict):
             channel = await connection.channel()
             await channel.declare_queue(queue_name, durable=True)
             await channel.default_exchange.publish(
-                aio_pika.Message(body=json.dumps(payload).encode(),
-                                 delivery_mode=aio_pika.DeliveryMode.PERSISTENT),
+                aio_pika.Message(
+                    body=json.dumps(payload, default=str).encode(),
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                ),
                 routing_key=queue_name,
             )
     except Exception as e:
@@ -106,8 +114,10 @@ def list_journeys(
 ):
     conn = get_conn()
     cur = conn.cursor()
-    query = ("SELECT id, driver_id, origin, destination, start_time, status, "
-             "region, vehicle_type, is_cross_region, created_at FROM journeys WHERE 1=1")
+    query = (
+        "SELECT id, driver_id, origin, destination, start_time, status, "
+        "region, vehicle_type, is_cross_region, created_at FROM journeys WHERE 1=1"
+    )
     params = []
     if region:
         query += " AND region = %s"
@@ -133,6 +143,8 @@ def list_journeys(
         j = dict(zip(cols, r))
         if j["vehicle_type"] == "EMERGENCY":
             j["badge"] = "EMERGENCY"
+        if j["status"] == "EMERGENCY_CONFIRMED":
+            j["cancellable"] = False
         journeys.append(j)
     return journeys
 
@@ -145,19 +157,62 @@ async def cancel_journey(
 ):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("SELECT id FROM journeys WHERE id = %s", (journey_id,))
-    if not cur.fetchone():
+    cur.execute(
+        "SELECT id, status, origin, destination, driver_id, vehicle_type "
+        "FROM journeys WHERE id = %s",
+        (journey_id,),
+    )
+    row = cur.fetchone()
+    if not row:
         cur.close()
         conn.close()
         raise HTTPException(404, "Journey not found")
+
+    j_id, status, origin, destination, driver_id, vehicle_type = row
+
+    # Block EMERGENCY_CONFIRMED
+    if status == "EMERGENCY_CONFIRMED" or vehicle_type == "EMERGENCY":
+        cur.close()
+        conn.close()
+        raise HTTPException(403, "Emergency journeys cannot be force cancelled")
+
+    # Already done
+    if status in ALREADY_DONE_STATUSES:
+        cur.close()
+        conn.close()
+        raise HTTPException(400, f"Journey is already {status}")
+
+    # Only cancel if in a cancelable state
+    if status not in CANCELABLE_STATUSES:
+        cur.close()
+        conn.close()
+        raise HTTPException(400, f"Journey status '{status}' is not cancellable")
+
     cur.execute(
-        "UPDATE journeys SET status = 'AUTHORITY_CANCELLED' WHERE id = %s",
-        (journey_id,),
+        "UPDATE journeys SET status = 'AUTHORITY_CANCELLED', cancelled_reason = %s WHERE id = %s",
+        (req.reason, journey_id),
     )
     conn.commit()
     cur.close()
     conn.close()
-    return {"status": "AUTHORITY_CANCELLED", "id": journey_id, "reason": req.reason}
+
+    await publish_event("journey_force_cancelled_events", {
+        "event_type": "journey_force_cancelled",
+        "journey_id": str(j_id),
+        "driver_id": driver_id,
+        "origin": origin,
+        "destination": destination,
+        "reason": req.reason,
+        "cancelled_by": user.get("email", "authority"),
+        "region": REGION,
+    })
+
+    return {
+        "journey_id": str(j_id),
+        "status": "AUTHORITY_CANCELLED",
+        "reason": req.reason,
+        "cancelled_by": user.get("email", "authority"),
+    }
 
 
 @app.post("/authority/closure", status_code=201)
@@ -168,50 +223,101 @@ async def create_closure(
     conn = get_conn()
     cur = conn.cursor()
 
-    # Insert closure
+    # Insert closure record
     cur.execute(
         "INSERT INTO road_closures (road_name, region, reason, created_by) "
         "VALUES (%s, %s, %s, %s) RETURNING id",
         (req.road_name, req.region, req.reason, user["email"]),
     )
-    closure_id = cur.fetchone()[0]
+    closure_id = str(cur.fetchone()[0])
 
-    # Cancel affected journeys
+    # Count emergency journeys that would be skipped
     cur.execute(
-        "UPDATE journeys SET status = 'AUTHORITY_CANCELLED' "
-        "WHERE status = 'CONFIRMED' AND start_time > NOW() "
-        "AND (origin ILIKE %s OR destination ILIKE %s) "
-        "RETURNING id",
-        (f"%{req.road_name}%", f"%{req.road_name}%"),
+        "SELECT COUNT(*) FROM journeys "
+        "WHERE route_segments::text ILIKE %s "
+        "AND status = 'EMERGENCY_CONFIRMED' "
+        "AND start_time > NOW()",
+        (f"%{req.road_name}%",),
     )
-    cancelled_ids = [r[0] for r in cur.fetchall()]
+    emergency_skipped = cur.fetchone()[0]
+
+    # Find and cancel affected non-emergency journeys via route_segments JSONB
+    cur.execute(
+        "UPDATE journeys SET status = 'AUTHORITY_CANCELLED', cancelled_reason = %s "
+        "WHERE route_segments::text ILIKE %s "
+        "AND status IN ('CONFIRMED', 'PENDING') "
+        "AND start_time > NOW() "
+        "AND status != 'EMERGENCY_CONFIRMED' "
+        "RETURNING id, driver_id, origin, destination",
+        (f"Road closure: {req.road_name} — {req.reason}", f"%{req.road_name}%"),
+    )
+    cancelled_rows = cur.fetchall()
     conn.commit()
     cur.close()
     conn.close()
 
-    # Publish road closure event
+    cancelled_ids = [str(r[0]) for r in cancelled_rows]
+
+    # Publish road closure event (one summary event)
     await publish_event("road_closure_events", {
-        "closure_id": str(closure_id),
+        "closure_id": closure_id,
         "road_name": req.road_name,
         "reason": req.reason,
         "region": req.region,
-        "cancelled_journeys": [str(i) for i in cancelled_ids],
+        "cancelled_journey_ids": cancelled_ids,
+        "affected_count": len(cancelled_ids),
     })
 
+    # Publish individual force-cancel events for each affected journey
+    for r in cancelled_rows:
+        await publish_event("journey_force_cancelled_events", {
+            "event_type": "journey_force_cancelled",
+            "journey_id": str(r[0]),
+            "driver_id": r[1],
+            "origin": r[2],
+            "destination": r[3],
+            "reason": f"Road closure: {req.road_name} — {req.reason}",
+            "cancelled_by": user.get("email", "authority"),
+            "region": REGION,
+        })
+
     return {
-        "id": str(closure_id),
+        "closure_id": closure_id,
         "road_name": req.road_name,
-        "region": req.region,
-        "reason": req.reason,
-        "cancelled_journeys": len(cancelled_ids),
+        "affected_journeys": len(cancelled_ids),
+        "cancelled_journey_ids": cancelled_ids,
+        "emergency_skipped": emergency_skipped,
     }
 
 
-@app.delete("/authority/closure/{closure_id}")
-def delete_closure(
-    closure_id: str,
-    user=Depends(require_role("admin")),
+@app.get("/authority/closures")
+def list_closures(
+    region: Optional[str] = None,
+    active: bool = True,
+    user=Depends(require_role("traffic_authority", "admin")),
 ):
+    conn = get_conn()
+    cur = conn.cursor()
+    query = (
+        "SELECT id, road_name, region, reason, active, created_by, created_at "
+        "FROM road_closures WHERE 1=1"
+    )
+    params = []
+    if active:
+        query += " AND active = TRUE"
+    region_filter = region or REGION
+    query += " AND region = %s ORDER BY created_at DESC"
+    params.append(region_filter)
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    cols = ["id", "road_name", "region", "reason", "active", "created_by", "created_at"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+@app.delete("/authority/closure/{closure_id}")
+def delete_closure(closure_id: str, user=Depends(require_role("admin"))):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
