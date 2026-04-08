@@ -201,10 +201,12 @@ async def handle_road_closure_event(payload: dict):
     destination = payload.get("destination", "")
     start_time = payload.get("start_time", "")
     road_name = payload.get("road_name", "Unknown road")
-    closure_reason = payload.get("reason", "No reason given")
+    # support both closure_reason (new) and reason (legacy)
+    closure_reason = payload.get("closure_reason", payload.get("reason", "No reason given"))
     region = payload.get("region", REGION)
     driver_name = payload.get("driver_name", payload.get("telegram_name", "Driver"))
     driver_email = payload.get("driver_email", "")
+    cancelled_by = payload.get("cancelled_by", "Traffic Authority")
 
     formatted_date, formatted_time = _fmt_datetime(start_time)
 
@@ -212,12 +214,13 @@ async def handle_road_closure_event(payload: dict):
         f"*Road Closure — Journey Cancelled* ⚠️\n\n"
         f"*Passenger:* {driver_name} ({driver_email})\n"
         f"*Your route:* {origin} → {destination}\n"
-        f"*Was scheduled:* {formatted_date} at {formatted_time}\n"
+        f"*Scheduled:* {formatted_date} at {formatted_time}\n"
         f"*Journey ID:* `{str(journey_id)[:8]}`\n\n"
         f"*Road closed:* {road_name}\n"
         f"*Closure reason:* {closure_reason}\n"
+        f"*Cancelled by:* Traffic Authority ({cancelled_by})\n"
         f"*Region:* {region}\n\n"
-        f"Your journey has been cancelled due to this closure.\n"
+        f"Your journey has been cancelled.\n"
         f"Please rebook via an alternative route."
     )
     await send_telegram(message)
