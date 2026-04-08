@@ -230,6 +230,37 @@ async def publish_event(queue_name: str, payload: dict):
         print(f"RabbitMQ publish error: {e}")
 
 
+async def publish_replication_event(payload: dict):
+    """Publish to named fanout exchange so RabbitMQ federation can replicate it cross-region.
+
+    Uses the 'journey_replication' fanout exchange (not the default exchange).
+    Federation policy on each VM federates this exchange from the other two regions,
+    so every region's notification service receives and upserts the journey locally.
+    """
+    try:
+        connection = await aio_pika.connect_robust(RABBITMQ_URL)
+        async with connection:
+            channel = await connection.channel()
+            exchange = await channel.declare_exchange(
+                "journey_replication",
+                aio_pika.ExchangeType.FANOUT,
+                durable=True,
+            )
+            # Also ensure the local queue exists and is bound, so the local
+            # notification service continues to receive these events.
+            local_q = await channel.declare_queue("journey_replication_events", durable=True)
+            await local_q.bind(exchange)
+            await exchange.publish(
+                aio_pika.Message(
+                    body=json.dumps(payload, default=str).encode(),
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                ),
+                routing_key="",  # fanout ignores routing key
+            )
+    except Exception as e:
+        print(f"RabbitMQ replication publish error: {e}")
+
+
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class JourneyRequest(BaseModel):
@@ -294,7 +325,7 @@ async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
             "region": REGION,
         }
         await publish_event("emergency_events", emerg_payload)
-        await publish_event("journey_replication_events", emerg_payload)
+        await publish_replication_event(emerg_payload)
         return {
             "id": journey_id,
             "status": "EMERGENCY_CONFIRMED",
@@ -429,7 +460,7 @@ async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
         "region": REGION,
     }
     await publish_event("booking_events", booking_payload)
-    await publish_event("journey_replication_events", booking_payload)
+    await publish_replication_event(booking_payload)
 
     return {
         "id": journey_id,
@@ -476,7 +507,7 @@ async def cross_region(req: CrossRegionRequest):
 
     # Publish replication event so local notification writes to replicated_journeys
     if inserted:
-        await publish_event("journey_replication_events", {
+        await publish_replication_event({
             "event_type": "journey_confirmed",
             "journey_id": req.journey_id,
             "origin_region": req.from_region,
@@ -535,7 +566,7 @@ async def cancel_journey(journey_id: str, user: dict = Depends(verify_token)):
         "status": "CANCELLED",
     }
     await publish_event("journey_cancelled_events", cancel_payload)
-    await publish_event("journey_replication_events", cancel_payload)
+    await publish_replication_event(cancel_payload)
     return {"status": "CANCELLED", "id": journey_id}
 
 
