@@ -188,7 +188,7 @@ export default function BookJourney() {
       `vehicle_type=${user.vehicle_type ?? "STANDARD"}`;
 
     apiGet<TimeSlot[]>(url)
-      .then(setSlots)
+      .then((data) => setSlots(Array.isArray(data) ? data : []))
       .catch(() => {
         if (!isRefresh) {
           // Fallback to all-available grid on initial load only
@@ -234,7 +234,7 @@ export default function BookJourney() {
 
   // Fetch famous routes on mount
   useEffect(() => {
-    apiGet<FamousRoute[]>(ENDPOINTS.FAMOUS_ROUTES).then(setFamousRoutes).catch(() => {});
+    apiGet<FamousRoute[]>(ENDPOINTS.FAMOUS_ROUTES).then((data) => setFamousRoutes(Array.isArray(data) ? data : [])).catch(() => {});
   }, []);
 
   const originRegion = originPlace ? detectRegion(originPlace.name) : null;

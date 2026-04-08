@@ -129,7 +129,8 @@ export default function Notifications() {
 
   useEffect(() => {
     apiGet<ApiJourney[]>(ENDPOINTS.JOURNEYS)
-      .then((journeys) => {
+      .then((data) => {
+        const journeys = Array.isArray(data) ? data : [];
         const notifs = journeys
           .sort((a, b) =>
             new Date(b.created_at ?? b.start_time).getTime() -
