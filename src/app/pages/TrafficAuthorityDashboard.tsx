@@ -57,7 +57,7 @@ interface ClosurePreview {
 interface ClosureResult {
   closure_id: string;
   road_name: string;
-  affected_journeys: number;
+  affected_journeys: number | AffectedJourney[];
   emergency_skipped: number;
   cancelled_journey_ids?: string[];
 }
@@ -100,6 +100,7 @@ export default function TrafficAuthorityDashboard() {
   const [loadingJourneys, setLoadingJourneys] = useState(true);
   const [submittingClosure, setSubmittingClosure] = useState(false);
   const [closureResult, setClosureResult] = useState<ClosureResult | null>(null);
+  const [closureError, setClosureError] = useState<string | null>(null);
 
   const [cancelTarget, setCancelTarget] = useState<AuthorityJourney | null>(null);
   const [cancelReason, setCancelReason] = useState("");
@@ -120,10 +121,13 @@ export default function TrafficAuthorityDashboard() {
 
   function fetchAll() {
     setLoadingJourneys(true);
-    apiGet<AuthorityJourney[]>(ENDPOINTS.AUTHORITY_JOURNEYS)
+    apiGet<unknown>(ENDPOINTS.AUTHORITY_JOURNEYS)
       .then((data) => {
-        const list = Array.isArray(data) ? data : [];
-        const sorted = [...list].sort((a, b) => {
+        const obj = data as Record<string, unknown>;
+        const raw: AuthorityJourney[] =
+          Array.isArray(obj?.journeys) ? (obj.journeys as AuthorityJourney[]) :
+          Array.isArray(data) ? (data as AuthorityJourney[]) : [];
+        const sorted = [...raw].sort((a, b) => {
           const ae = a.vehicle_type === "EMERGENCY" || a.status === "EMERGENCY_CONFIRMED" ? 0 : 1;
           const be = b.vehicle_type === "EMERGENCY" || b.status === "EMERGENCY_CONFIRMED" ? 0 : 1;
           return ae - be;
@@ -133,7 +137,16 @@ export default function TrafficAuthorityDashboard() {
       .catch(() => {})
       .finally(() => setLoadingJourneys(false));
 
-    apiGet<Closure[]>(ENDPOINTS.AUTHORITY_CLOSURES).then((data) => setClosures(Array.isArray(data) ? data : [])).catch(() => {});
+    apiGet<unknown>(ENDPOINTS.AUTHORITY_CLOSURES)
+      .then((data) => {
+        const obj = data as Record<string, unknown>;
+        setClosures(
+          Array.isArray(obj?.closures) ? (obj.closures as Closure[]) :
+          Array.isArray(obj?.road_closures) ? (obj.road_closures as Closure[]) :
+          Array.isArray(data) ? (data as Closure[]) : []
+        );
+      })
+      .catch(() => {});
     apiGet<AuthorityStats>(ENDPOINTS.AUTHORITY_STATS).then(setStats).catch(() => {});
   }
 
@@ -200,6 +213,7 @@ export default function TrafficAuthorityDashboard() {
 
   async function handleConfirmClosure() {
     setSubmittingClosure(true);
+    setClosureError(null);
     try {
       const result = await apiPost<ClosureResult>(ENDPOINTS.AUTHORITY_CLOSURE, {
         road_name: closureData.roadName,
@@ -209,10 +223,12 @@ export default function TrafficAuthorityDashboard() {
       setClosurePreview(null);
       setIsClosureModalOpen(false);
       setClosureData({ roadName: "", region: "EU", reason: "", cancelAffected: false });
+      setClosureError(null);
       setClosureResult(result);
       fetchAll();
     } catch (err: unknown) {
-      toast.error("Closure failed", { description: err instanceof Error ? err.message : "Unknown" });
+      const msg = err instanceof Error ? err.message : "Closure failed";
+      setClosureError(msg);
     } finally {
       setSubmittingClosure(false);
     }
@@ -222,6 +238,7 @@ export default function TrafficAuthorityDashboard() {
     setIsClosureModalOpen(false);
     setClosureData({ roadName: "", region: "EU", reason: "", cancelAffected: false });
     setClosurePreview(null);
+    setClosureError(null);
   }
 
   function formatTime(t: string) {
@@ -398,130 +415,139 @@ export default function TrafficAuthorityDashboard() {
         )}
       </div>
 
-      {/* ── Create Closure Dialog ──────────────────────────────────────── */}
+      {/* ── Create Closure Dialog (form + preview in one Dialog) ───────── */}
       <Dialog open={isClosureModalOpen} onOpenChange={(open) => { if (!open) resetClosureModal(); }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Create Road Closure</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-4">
+          <DialogHeader>
+            <DialogTitle>{closurePreview ? "Closure Preview" : "Create Road Closure"}</DialogTitle>
+          </DialogHeader>
 
-            {/* Region */}
-            <div className="space-y-2">
-              <Label>Region</Label>
-              <Select
-                value={closureData.region}
-                onValueChange={(v: "EU" | "US" | "APAC") => setClosureData({ ...closureData, region: v, roadName: "" })}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="EU">EU</SelectItem>
-                  <SelectItem value="US">US</SelectItem>
-                  <SelectItem value="APAC">APAC</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+          {!closurePreview ? (
+            /* ── Form step ── */
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Region</Label>
+                <Select
+                  value={closureData.region}
+                  onValueChange={(v: "EU" | "US" | "APAC") => setClosureData({ ...closureData, region: v, roadName: "" })}
+                >
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="EU">EU</SelectItem>
+                    <SelectItem value="US">US</SelectItem>
+                    <SelectItem value="APAC">APAC</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
 
-            {/* Road Name — pure select dropdown */}
-            <div className="space-y-2">
-              <Label>Road Name</Label>
-              <select
-                value={closureData.roadName}
-                onChange={(e) => setClosureData(d => ({ ...d, roadName: e.target.value }))}
-                className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-              >
-                <option value="">Select a road segment...</option>
-                {(Array.isArray(availableSegments) ? availableSegments : []).map(seg => (
-                  <option key={seg} value={seg}>{seg}</option>
-                ))}
-                {(!Array.isArray(availableSegments) || availableSegments.length === 0) && (
-                  <option disabled>No active journeys — book journeys first</option>
-                )}
-              </select>
-              <p className="text-xs text-gray-500">
-                {(Array.isArray(availableSegments) ? availableSegments : []).length} road segments available from active journeys
-              </p>
-            </div>
+              <div className="space-y-2">
+                <Label>Road Name</Label>
+                <select
+                  value={closureData.roadName}
+                  onChange={(e) => setClosureData(d => ({ ...d, roadName: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
+                >
+                  <option value="">Select a road segment...</option>
+                  {(Array.isArray(availableSegments) ? availableSegments : []).map(seg => (
+                    <option key={seg} value={seg}>{seg}</option>
+                  ))}
+                  {(!Array.isArray(availableSegments) || availableSegments.length === 0) && (
+                    <option disabled>No active journeys — book journeys first</option>
+                  )}
+                </select>
+                <p className="text-xs text-gray-500">
+                  {(Array.isArray(availableSegments) ? availableSegments : []).length} road segments available from active journeys
+                </p>
+              </div>
 
-            {/* Reason */}
-            <div className="space-y-2">
-              <Label>Reason</Label>
-              <Textarea
-                placeholder="Describe reason for closure..."
-                value={closureData.reason}
-                onChange={(e) => setClosureData(d => ({ ...d, reason: e.target.value }))}
-              />
-            </div>
+              <div className="space-y-2">
+                <Label>Reason</Label>
+                <Textarea
+                  placeholder="Describe reason for closure..."
+                  value={closureData.reason}
+                  onChange={(e) => setClosureData(d => ({ ...d, reason: e.target.value }))}
+                />
+              </div>
 
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="cancel-affected"
-                checked={closureData.cancelAffected}
-                onCheckedChange={(c) => setClosureData(d => ({ ...d, cancelAffected: c as boolean }))}
-              />
-              <label htmlFor="cancel-affected" className="text-sm text-gray-700">Cancel all affected journeys</label>
+              <div className="flex items-center space-x-2">
+                <Checkbox
+                  id="cancel-affected"
+                  checked={closureData.cancelAffected}
+                  onCheckedChange={(c) => setClosureData(d => ({ ...d, cancelAffected: c as boolean }))}
+                />
+                <label htmlFor="cancel-affected" className="text-sm text-gray-700">Cancel all affected journeys</label>
+              </div>
             </div>
-          </div>
+          ) : (
+            /* ── Preview step ── */
+            <div className="space-y-4 py-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <p className="font-semibold text-amber-900">
+                  Closing <span className="font-bold">{closurePreview.road_name}</span> will cancel:
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 text-center">
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-gray-900">
+                    {closurePreview.will_cancel ?? (Array.isArray(closurePreview.affected_journeys) ? closurePreview.affected_journeys.length : 0)}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">Journeys affected</p>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-2xl font-bold text-red-600">{closurePreview.emergency_skipped}</p>
+                  <p className="text-xs text-gray-500 mt-1">Emergency vehicles skipped</p>
+                </div>
+              </div>
+
+              {Array.isArray(closurePreview.affected_journeys) && closurePreview.affected_journeys.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-gray-500 uppercase mb-2">Affected Routes</p>
+                  <div className="space-y-1 max-h-32 overflow-y-auto bg-gray-50 rounded-lg p-3">
+                    {closurePreview.affected_journeys.map((j) => (
+                      <p key={j.id} className="text-sm text-gray-700">• {j.origin} → {j.destination}</p>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {closureError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+                  Error: {closureError}
+                </div>
+              )}
+            </div>
+          )}
+
           <DialogFooter>
-            <Button variant="outline" onClick={resetClosureModal}>Cancel</Button>
-            <Button
-              onClick={handlePreviewClosure}
-              disabled={!closureData.roadName || !closureData.reason || loadingPreview}
-              className="bg-[#2563EB] hover:bg-[#1d4ed8]"
-            >
-              {loadingPreview ? "Loading…" : "Preview & Create"}
-            </Button>
+            {!closurePreview ? (
+              <>
+                <Button variant="outline" onClick={resetClosureModal}>Cancel</Button>
+                <Button
+                  onClick={handlePreviewClosure}
+                  disabled={!closureData.roadName || !closureData.reason || loadingPreview}
+                  className="bg-[#2563EB] hover:bg-[#1d4ed8]"
+                >
+                  {loadingPreview ? "Loading…" : "Preview & Create"}
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button variant="outline" onClick={() => { setClosurePreview(null); setClosureError(null); }} disabled={submittingClosure}>
+                  Back
+                </Button>
+                <Button
+                  onClick={handleConfirmClosure}
+                  disabled={submittingClosure}
+                  className="bg-red-600 hover:bg-red-700"
+                >
+                  {submittingClosure ? "Creating…" : "Confirm Closure"}
+                </Button>
+              </>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* ── Closure Preview Modal ──────────────────────────────────────── */}
-      <Modal isOpen={!!closurePreview} onClose={() => setClosurePreview(null)} title="Closure Preview">
-        {closurePreview && (
-          <div className="space-y-4">
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-              <p className="font-semibold text-amber-900">
-                Closing <span className="font-bold">{closurePreview.road_name}</span> will cancel:
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4 text-center">
-              <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-2xl font-bold text-gray-900">
-                  {closurePreview.will_cancel ?? (Array.isArray(closurePreview.affected_journeys) ? closurePreview.affected_journeys.length : 0)}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">Journeys affected</p>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-3">
-                <p className="text-2xl font-bold text-red-600">{closurePreview.emergency_skipped}</p>
-                <p className="text-xs text-gray-500 mt-1">Emergency vehicles skipped</p>
-              </div>
-            </div>
-
-            {Array.isArray(closurePreview.affected_journeys) && closurePreview.affected_journeys.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-gray-500 uppercase mb-2">Affected Routes</p>
-                <div className="space-y-1 max-h-32 overflow-y-auto bg-gray-50 rounded-lg p-3">
-                  {closurePreview.affected_journeys.map((j) => (
-                    <p key={j.id} className="text-sm text-gray-700">• {j.origin} → {j.destination}</p>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="flex gap-3 pt-2">
-              <Button variant="outline" onClick={() => setClosurePreview(null)} className="flex-1">
-                Cancel
-              </Button>
-              <Button
-                onClick={handleConfirmClosure}
-                disabled={submittingClosure}
-                className="flex-1 bg-red-600 hover:bg-red-700"
-              >
-                {submittingClosure ? "Creating…" : "Confirm Closure"}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
 
       {/* ── Closure Result Modal ───────────────────────────────────────── */}
       <Modal isOpen={!!closureResult} onClose={() => setClosureResult(null)} title="Road Closure Created">
@@ -533,7 +559,11 @@ export default function TrafficAuthorityDashboard() {
             <div className="space-y-2 text-sm">
               <div className="flex justify-between py-2 border-b">
                 <span className="text-gray-600">Journeys cancelled</span>
-                <span className="font-bold text-gray-900">{closureResult.affected_journeys}</span>
+                <span className="font-bold text-gray-900">
+                  {Array.isArray(closureResult.affected_journeys)
+                    ? closureResult.affected_journeys.length
+                    : closureResult.affected_journeys}
+                </span>
               </div>
               <div className="flex justify-between py-2 border-b">
                 <span className="text-gray-600">Emergency vehicles skipped</span>
