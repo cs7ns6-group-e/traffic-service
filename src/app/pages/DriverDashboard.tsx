@@ -49,6 +49,7 @@ export default function DriverDashboard() {
 
   const [journeys, setJourneys] = useState<ApiJourney[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [cancelTarget, setCancelTarget] = useState<ApiJourney | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -58,9 +59,15 @@ export default function DriverDashboard() {
   function fetchJourneys() {
     if (!user?.email) { setLoading(false); return; }
     setLoading(true);
-    apiGet<ApiJourney[]>(`${ENDPOINTS.JOURNEYS}?driver_id=${encodeURIComponent(user.email)}`)
-      .then(setJourneys)
-      .catch(() => {})
+    setError(null);
+    apiGet<ApiJourney[] | { journeys: ApiJourney[] }>(`${ENDPOINTS.JOURNEYS}?driver_id=${encodeURIComponent(user.email)}`)
+      .then((data) => {
+        const list = Array.isArray(data) ? data : ((data as { journeys?: ApiJourney[] }).journeys ?? []);
+        setJourneys(list);
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to load journeys. Please try again.");
+      })
       .finally(() => setLoading(false));
   }
 
@@ -170,6 +177,12 @@ export default function DriverDashboard() {
                 <div className="h-4 bg-gray-200 rounded w-2/3" />
               </div>
             ))}
+          </div>
+        ) : error ? (
+          <div className="text-center py-12">
+            <p className="text-red-600 font-medium mb-2">Failed to load journeys</p>
+            <p className="text-sm text-gray-500 mb-4">{error}</p>
+            <Button variant="outline" onClick={fetchJourneys}>Retry</Button>
           </div>
         ) : filtered.length === 0 ? (
           <div className="text-center py-12 text-gray-500">

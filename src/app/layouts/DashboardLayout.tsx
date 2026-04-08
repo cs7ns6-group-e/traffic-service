@@ -17,13 +17,15 @@ import { RegionBadge } from "../components/RegionBadge";
 import { Button } from "../components/ui/button";
 import { cn } from "../components/ui/utils";
 import { useAuth } from "../context/AuthContext";
+import { apiGet } from "../api/client";
+import { ENDPOINTS } from "../api/config";
 
 export default function DashboardLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [notificationCount] = useState(3);
+  const [notificationCount, setNotificationCount] = useState(0);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -38,6 +40,20 @@ export default function DashboardLayout() {
       : location.pathname.startsWith("/authority")
       ? "traffic_authority"
       : "admin");
+
+  // Fetch real notification count for drivers
+  useEffect(() => {
+    if (role !== "driver" || !user?.email) return;
+    apiGet<unknown>(`${ENDPOINTS.JOURNEYS}?driver_id=${encodeURIComponent(user.email)}`)
+      .then((data) => {
+        const list = Array.isArray(data) ? data : ((data as { journeys?: unknown[] }).journeys ?? []);
+        const unread = (list as Array<{ status: string }>).filter(
+          j => j.status === "PENDING" || j.status === "AUTHORITY_CANCELLED"
+        ).length;
+        setNotificationCount(unread);
+      })
+      .catch(() => {});
+  }, [role, user?.email]);
 
   const roleConfig = {
     driver: {

@@ -52,11 +52,18 @@ interface AuthorityStats {
   cross_region?: number;
 }
 
+const ROADS_BY_REGION: Record<"EU" | "US" | "APAC", string[]> = {
+  EU:   ["N7", "M50", "N11", "N4", "N8", "N25", "M1", "M7", "N9", "A5", "M20", "N22", "N6", "N3", "M11"],
+  US:   ["I-95", "I-5", "I-10", "I-90", "I-80", "I-405", "I-66", "US-101", "I-285", "I-75", "I-35", "I-70"],
+  APAC: ["AYE", "PIE", "KJE", "BKE", "SLE", "CTE", "ECP", "TPE", "MCE", "Pan-Island Expressway"],
+};
+
 export default function TrafficAuthorityDashboard() {
   const [selectedRegion, setSelectedRegion] = useState<"EU" | "US" | "APAC">("EU");
   const [isClosureModalOpen, setIsClosureModalOpen] = useState(false);
   const [isBroadcastModalOpen, setIsBroadcastModalOpen] = useState(false);
   const [closureData, setClosureData] = useState({ roadName: "", region: "EU" as "EU" | "US" | "APAC", reason: "", cancelAffected: false });
+  const [useCustomRoad, setUseCustomRoad] = useState(false);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | "Confirmed" | "Pending" | "Cancelled">("All");
 
@@ -146,6 +153,7 @@ export default function TrafficAuthorityDashboard() {
       });
       setIsClosureModalOpen(false);
       setClosureData({ roadName: "", region: "EU", reason: "", cancelAffected: false });
+      setUseCustomRoad(false);
       setClosureResult(result);
       fetchAll();
     } catch (err: unknown) {
@@ -336,12 +344,14 @@ export default function TrafficAuthorityDashboard() {
           <DialogHeader><DialogTitle>Create Road Closure</DialogTitle></DialogHeader>
           <div className="space-y-4 py-4">
             <div className="space-y-2">
-              <Label>Road Name</Label>
-              <Input placeholder="e.g., N7 — Dublin Road" value={closureData.roadName} onChange={(e) => setClosureData({ ...closureData, roadName: e.target.value })} />
-            </div>
-            <div className="space-y-2">
               <Label>Region</Label>
-              <Select value={closureData.region} onValueChange={(v: "EU" | "US" | "APAC") => setClosureData({ ...closureData, region: v })}>
+              <Select
+                value={closureData.region}
+                onValueChange={(v: "EU" | "US" | "APAC") => {
+                  setClosureData({ ...closureData, region: v, roadName: "" });
+                  setUseCustomRoad(false);
+                }}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="EU">EU</SelectItem>
@@ -349,6 +359,37 @@ export default function TrafficAuthorityDashboard() {
                   <SelectItem value="APAC">APAC</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Road Name</Label>
+              <Select
+                value={useCustomRoad ? "__other__" : (closureData.roadName || "")}
+                onValueChange={(v) => {
+                  if (v === "__other__") {
+                    setUseCustomRoad(true);
+                    setClosureData({ ...closureData, roadName: "" });
+                  } else {
+                    setUseCustomRoad(false);
+                    setClosureData({ ...closureData, roadName: v });
+                  }
+                }}
+              >
+                <SelectTrigger><SelectValue placeholder="Select a road…" /></SelectTrigger>
+                <SelectContent>
+                  {ROADS_BY_REGION[closureData.region].map(road => (
+                    <SelectItem key={road} value={road}>{road}</SelectItem>
+                  ))}
+                  <SelectItem value="__other__">Other (custom)</SelectItem>
+                </SelectContent>
+              </Select>
+              {useCustomRoad && (
+                <Input
+                  placeholder="Enter custom road name…"
+                  value={closureData.roadName}
+                  onChange={(e) => setClosureData({ ...closureData, roadName: e.target.value })}
+                  className="mt-2"
+                />
+              )}
             </div>
             <div className="space-y-2">
               <Label>Reason</Label>

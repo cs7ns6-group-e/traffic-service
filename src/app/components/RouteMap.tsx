@@ -1,114 +1,103 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
+// Fix Leaflet default icons (known Vite/webpack issue)
+delete (L.Icon.Default.prototype as Record<string, unknown>)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
+  iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
+  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
+});
+
 interface RouteMapProps {
-  coordinates: [number, number][]; // GeoJSON [lon, lat] pairs
+  /** GeoJSON-style [lon, lat] coordinate pairs */
+  coordinates: [number, number][];
+  height?: number;
   className?: string;
 }
 
-// Defer Leaflet import to avoid SSR issues
-let L: typeof import("leaflet") | null = null;
-
-async function getLeaflet() {
-  if (!L) {
-    L = await import("leaflet");
-    // Fix default icon
-    delete (L.Icon.Default.prototype as Record<string, unknown>)._getIconUrl;
-    L.Icon.Default.mergeOptions({
-      iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-      shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-    });
-  }
-  return L;
-}
-
-export function RouteMap({ coordinates, className = "" }: RouteMapProps) {
+export function RouteMap({ coordinates, height = 200, className = "" }: RouteMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<import("leaflet").Map | null>(null);
-  const layersRef = useRef<import("leaflet").LayerGroup | null>(null);
+  const mapRef = useRef<L.Map | null>(null);
+  const layerRef = useRef<L.LayerGroup | null>(null);
+  // mapReady triggers the coordinate-render effect once the map is initialised
+  const [mapReady, setMapReady] = useState(false);
 
-  // Initialize map once
+  // ── Initialise map (once) ──────────────────────────────────────────────
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) return;
+    const el = containerRef.current;
+    if (!el) return;
 
-    let mounted = true;
-    getLeaflet().then((Leaflet) => {
-      if (!mounted || !containerRef.current || mapRef.current) return;
+    // Guard: if a prior Leaflet instance left state on this node, remove it
+    if ((el as Element & { _leaflet_id?: unknown })._leaflet_id !== undefined) {
+      try { L.map(el).remove(); } catch { /* ignore */ }
+    }
 
-      const map = Leaflet.map(containerRef.current, { zoomControl: true }).setView([53.35, -6.26], 7);
-      Leaflet.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "© OpenStreetMap",
-        maxZoom: 18,
-      }).addTo(map);
+    const map = L.map(el, { zoomControl: true }).setView([53.35, -6.26], 7);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap",
+      maxZoom: 19,
+    }).addTo(map);
 
-      const layers = Leaflet.layerGroup().addTo(map);
-      mapRef.current = map;
-      layersRef.current = layers;
-    });
+    const layer = L.layerGroup().addTo(map);
+    mapRef.current = map;
+    layerRef.current = layer;
+    setMapReady(true);
 
     return () => {
-      mounted = false;
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-        layersRef.current = null;
-      }
+      map.remove();
+      mapRef.current = null;
+      layerRef.current = null;
+      setMapReady(false);
     };
-  }, []);
+  }, []); // run once on mount
 
-  // Update route when coordinates change
+  // ── Render route whenever coordinates change (or map becomes ready) ────
   useEffect(() => {
     const map = mapRef.current;
-    const layers = layersRef.current;
-    if (!map || !layers || !coordinates?.length) return;
+    const layer = layerRef.current;
+    if (!mapReady || !map || !layer) return;
 
-    let mounted = true;
-    getLeaflet().then((Leaflet) => {
-      if (!mounted || !map || !layers) return;
+    layer.clearLayers();
 
-      layers.clearLayers();
+    if (!coordinates?.length) return;
 
-      // Convert GeoJSON [lon, lat] → Leaflet [lat, lon]
-      const latLngs = coordinates.map(([lon, lat]) => [lat, lon] as [number, number]);
+    // API returns [lon, lat] (GeoJSON); Leaflet needs [lat, lon]
+    const lls: [number, number][] = coordinates.map(([lon, lat]) => [lat, lon]);
 
-      // Polyline
-      Leaflet.polyline(latLngs, { color: "#2563EB", weight: 4, opacity: 0.8 }).addTo(layers);
+    // Route polyline
+    L.polyline(lls, { color: "#2563EB", weight: 4, opacity: 0.85 }).addTo(layer);
 
-      // Origin (green circle)
-      const greenIcon = Leaflet.divIcon({
-        className: "",
-        html: '<div style="width:14px;height:14px;background:#16A34A;border:3px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.5)"></div>',
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
-      });
-
-      // Destination (red circle)
-      const redIcon = Leaflet.divIcon({
-        className: "",
-        html: '<div style="width:14px;height:14px;background:#DC2626;border:3px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.5)"></div>',
-        iconSize: [14, 14],
-        iconAnchor: [7, 7],
-      });
-
-      Leaflet.marker(latLngs[0], { icon: greenIcon }).addTo(layers);
-      Leaflet.marker(latLngs[latLngs.length - 1], { icon: redIcon }).addTo(layers);
-
-      // Fit bounds
-      const bounds = Leaflet.latLngBounds(latLngs);
-      map.fitBounds(bounds, { padding: [30, 30] });
-
-      // Invalidate size after layout
-      setTimeout(() => map.invalidateSize(), 100);
+    // Origin → green dot
+    const gIcon = L.divIcon({
+      className: "",
+      html: `<div style="width:14px;height:14px;background:#16A34A;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,.45)"></div>`,
+      iconSize: [14, 14],
+      iconAnchor: [7, 7],
+    });
+    // Destination → red dot
+    const rIcon = L.divIcon({
+      className: "",
+      html: `<div style="width:14px;height:14px;background:#DC2626;border:3px solid #fff;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,.45)"></div>`,
+      iconSize: [14, 14],
+      iconAnchor: [7, 7],
     });
 
-    return () => { mounted = false; };
-  }, [coordinates]);
+    L.marker(lls[0], { icon: gIcon }).addTo(layer);
+    L.marker(lls[lls.length - 1], { icon: rIcon }).addTo(layer);
+
+    // Fit all points with padding
+    map.fitBounds(L.latLngBounds(lls), { padding: [24, 24] });
+    // Invalidate size in case container was hidden during mount
+    setTimeout(() => { map.invalidateSize(); }, 80);
+  }, [mapReady, coordinates]);
 
   return (
     <div
       ref={containerRef}
       className={className}
-      style={{ height: "220px", borderRadius: "8px", overflow: "hidden" }}
+      style={{ height: `${height}px`, borderRadius: "8px", overflow: "hidden", background: "#e5e7eb" }}
     />
   );
 }
