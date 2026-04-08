@@ -82,3 +82,36 @@ Maintained automatically. Updated on every significant change.
 - 8 microservices deployed
 - RabbitMQ federation configured
 - GitHub Actions CI/CD set up
+
+## [2026-04-08] — fix/data-replication
+
+### What changed
+- Added replicated_journeys table to all 3 VMs (init in notification service)
+- RabbitMQ: journey_booking now publishes to journey_replication_events queue
+  for every booking, cancellation, and emergency confirmation
+- cross-region endpoint publishes to local journey_replication_events so remote
+  VMs write incoming cross-region journeys to replicated_journeys
+- Notification service: new consumer for journey_replication_events writes to
+  local replicated_journeys (skips events from own region)
+- Added GET /admin/replicated endpoint showing replication status per origin region
+- Telegram messages now include full details: driver name, email, route, date,
+  time, distance, road segments, journey ID, reason for cancellation
+- All event types enriched: confirmed, emergency, cancelled, force_cancelled,
+  road_closure
+
+### Why
+- Data replication demonstrates distributed systems eventual consistency
+  for CS7NS6 checklist
+- /admin/replicated shows cross-region data arriving asynchronously via RabbitMQ
+- Better Telegram messages make notifications useful for demo and for drivers
+
+### Files modified
+- notification/main.py
+- journey_booking/main.py
+- admin_service/main.py
+
+### Test commands
+curl http://35.240.110.205/admin/replicated -H "Authorization: Bearer $ADMIN_TOKEN"
+curl http://34.10.45.241/admin/replicated -H "Authorization: Bearer $ADMIN_TOKEN"
+curl http://34.126.131.195/admin/replicated -H "Authorization: Bearer $ADMIN_TOKEN"
+All should show journeys replicated from other regions after cross-region booking

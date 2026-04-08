@@ -215,6 +215,7 @@ class CrossRegionRequest(BaseModel):
 async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
     driver_id = user["sub"]
     driver_email = user.get("email", driver_id)
+    driver_name = user.get("name", "Driver")
     vehicle_type = user.get("vehicle_type", "STANDARD")
     start_time = datetime.fromisoformat(req.start_time)
 
@@ -232,14 +233,29 @@ async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
         conn.commit()
         cur.close()
         conn.close()
-        await publish_event("emergency_events", {
+        emerg_payload = {
+            "event_type": "journey_emergency_confirmed",
             "journey_id": journey_id,
+            "origin_region": REGION,
+            "driver_id": str(driver_id),
+            "driver_email": driver_email,
+            "driver_name": driver_name,
             "origin": req.origin,
             "destination": req.destination,
-            "driver_id": driver_id,
-            "region": REGION,
+            "start_time": req.start_time,
+            "status": "EMERGENCY_CONFIRMED",
             "vehicle_type": "EMERGENCY",
-        })
+            "route_segments": [],
+            "distance_km": None,
+            "duration_mins": None,
+            "is_cross_region": False,
+            "dest_region": None,
+            "created_at": str(datetime.utcnow()),
+            "telegram_name": driver_name,
+            "region": REGION,
+        }
+        await publish_event("emergency_events", emerg_payload)
+        await publish_event("journey_replication_events", emerg_payload)
         return {
             "id": journey_id,
             "status": "EMERGENCY_CONFIRMED",
@@ -328,18 +344,30 @@ async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
         except Exception as e:
             print(f"Cross-region call failed: {e}")
 
-    # Publish booking event
-    await publish_event("booking_events", {
+    # Publish booking event + replication event
+    booking_payload = {
+        "event_type": "journey_confirmed",
         "journey_id": journey_id,
+        "origin_region": REGION,
+        "driver_id": str(driver_id),
+        "driver_email": driver_email,
+        "driver_name": driver_name,
         "origin": req.origin,
         "destination": req.destination,
         "start_time": req.start_time,
         "status": "CONFIRMED",
-        "driver_id": driver_id,
-        "region": REGION,
+        "vehicle_type": vehicle_type,
+        "route_segments": route_segments,
+        "distance_km": distance_km,
+        "duration_mins": duration_mins,
         "is_cross_region": is_cross_region,
         "dest_region": dest_region,
-    })
+        "created_at": str(datetime.utcnow()),
+        "telegram_name": driver_name,
+        "region": REGION,
+    }
+    await publish_event("booking_events", booking_payload)
+    await publish_event("journey_replication_events", booking_payload)
 
     return {
         "id": journey_id,
@@ -359,9 +387,10 @@ async def book_journey(req: JourneyRequest, user: dict = Depends(verify_token)):
 
 
 @app.post("/journeys/cross-region", status_code=201)
-def cross_region(req: CrossRegionRequest):
+async def cross_region(req: CrossRegionRequest):
     conn = get_conn()
     cur = conn.cursor()
+    inserted = False
     try:
         start_time = datetime.fromisoformat(req.start_time)
         cur.execute(
@@ -371,7 +400,8 @@ def cross_region(req: CrossRegionRequest):
             (req.journey_id, req.driver_id, req.origin, req.destination,
              start_time, "CONFIRMED", REGION, True, "STANDARD", json.dumps([])),
         )
-        if cur.rowcount > 0:
+        inserted = cur.rowcount > 0
+        if inserted:
             cur.execute(
                 "INSERT INTO cross_region_events (journey_id, from_region, to_region, event_type) "
                 "VALUES (%s,%s,%s,%s)",
@@ -381,6 +411,28 @@ def cross_region(req: CrossRegionRequest):
     finally:
         cur.close()
         conn.close()
+
+    # Publish replication event so local notification writes to replicated_journeys
+    if inserted:
+        await publish_event("journey_replication_events", {
+            "event_type": "journey_confirmed",
+            "journey_id": req.journey_id,
+            "origin_region": req.from_region,
+            "driver_id": req.driver_id,
+            "driver_email": "",
+            "driver_name": "Driver",
+            "origin": req.origin,
+            "destination": req.destination,
+            "start_time": req.start_time,
+            "status": "CONFIRMED",
+            "vehicle_type": "STANDARD",
+            "route_segments": [],
+            "distance_km": None,
+            "duration_mins": None,
+            "is_cross_region": True,
+            "dest_region": REGION,
+            "created_at": str(datetime.utcnow()),
+        })
     return {"status": "registered", "journey_id": req.journey_id}
 
 
@@ -389,7 +441,8 @@ async def cancel_journey(journey_id: str, user: dict = Depends(verify_token)):
     conn = get_conn()
     cur = conn.cursor()
     cur.execute(
-        "SELECT driver_id, origin, destination FROM journeys WHERE id = %s",
+        "SELECT driver_id, driver_email, origin, destination, start_time "
+        "FROM journeys WHERE id = %s",
         (journey_id,),
     )
     row = cur.fetchone()
@@ -405,12 +458,22 @@ async def cancel_journey(journey_id: str, user: dict = Depends(verify_token)):
     conn.commit()
     cur.close()
     conn.close()
-    await publish_event("journey_cancelled_events", {
+    cancel_payload = {
+        "event_type": "journey_cancelled",
         "journey_id": journey_id,
-        "origin": row[1],
-        "destination": row[2],
+        "origin_region": REGION,
+        "driver_id": str(user["sub"]),
+        "driver_email": row[1] or "",
+        "driver_name": user.get("name", "Driver"),
+        "origin": row[2],
+        "destination": row[3],
+        "start_time": str(row[4]) if row[4] else "",
         "reason": "Cancelled by driver",
-    })
+        "cancelled_by": "driver",
+        "status": "CANCELLED",
+    }
+    await publish_event("journey_cancelled_events", cancel_payload)
+    await publish_event("journey_replication_events", cancel_payload)
     return {"status": "CANCELLED", "id": journey_id}
 
 
