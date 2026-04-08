@@ -33,6 +33,7 @@ export const ENDPOINTS = {
   ADMIN_LATENCY:     "/admin/latency",
   ADMIN_QUEUE:       "/admin/queue",
   ADMIN_CACHE:       "/admin/cache",
+  ADMIN_REPLICATED:  "/admin/replicated",
 
   CONFLICTS_SLOTS: "/conflicts/slots",
   SEARCH:          "/search",
