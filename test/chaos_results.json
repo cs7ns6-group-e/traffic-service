@@ -1,0 +1,302 @@
+{
+  "timestamp": "2026-04-10T16:00:02.859640",
+  "total": 42,
+  "passed": 31,
+  "failed": 11,
+  "results": [
+    {
+      "scenario": "C-1",
+      "name": "nginx LB health survives routing outage",
+      "passed": true,
+      "detail": "HTTP 200",
+      "duration_ms": 51.96809768676758
+    },
+    {
+      "scenario": "C-1",
+      "name": "Booking succeeds without routing (graceful degrade)",
+      "passed": true,
+      "detail": "HTTP 201 | route_segments likely empty",
+      "duration_ms": 675.4481792449951
+    },
+    {
+      "scenario": "C-1",
+      "name": "route_segments empty when routing down (expected)",
+      "passed": false,
+      "detail": "segments=[\"O'Connell Street Lower\", \"O'Connell Street Upper\", 'Parnell Street', \"Ryder'S Row\", 'North King Street', 'Church Street', 'Bridge Street Lower', 'Bridge Street Upper', 'Cornmarket', 'Thomas Street', \"James'S Street\", 'Mount Brown', 'Old Kilmainham', 'Emmet Road', 'Tyrconnell Road', 'Naas Road', 'Naas Bypass', 'Newbridge Bypass', 'The Curragh Motorway', 'Kildare Bypass']",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-1",
+      "name": "road_routing recovered",
+      "passed": true,
+      "detail": "took ~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-2",
+      "name": "Booking confirmed when conflict service is down",
+      "passed": true,
+      "detail": "HTTP 201 in 494ms",
+      "duration_ms": 493.5739040374756
+    },
+    {
+      "scenario": "C-2",
+      "name": "conflict_detection recovered",
+      "passed": true,
+      "detail": "took ~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-3",
+      "name": "Booking confirmed when notification service down",
+      "passed": false,
+      "detail": "HTTP timeout",
+      "duration_ms": 834.6307277679443
+    },
+    {
+      "scenario": "C-3",
+      "name": "Admin health shows notification status",
+      "passed": true,
+      "detail": "status=healthy",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-3",
+      "name": "notification recovered",
+      "passed": true,
+      "detail": "took ~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-4",
+      "name": "Slot reservation returns (no hang) with Redis down",
+      "passed": true,
+      "detail": "HTTP timeout in 51ms",
+      "duration_ms": 50.81510543823242
+    },
+    {
+      "scenario": "C-4",
+      "name": "Full booking attempted with Redis down (not crash)",
+      "passed": true,
+      "detail": "HTTP 201",
+      "duration_ms": 759.8681449890137
+    },
+    {
+      "scenario": "C-4",
+      "name": "Redis restarted (no health probe available)",
+      "passed": true,
+      "detail": "container restarted; conflict service will reconnect on next request",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-5",
+      "name": "Booking still CONFIRMED with RabbitMQ down",
+      "passed": false,
+      "detail": "HTTP timeout in 484ms",
+      "duration_ms": 483.9308261871338
+    },
+    {
+      "scenario": "C-5",
+      "name": "Cross-region booking (direct HTTP) works without RabbitMQ",
+      "passed": true,
+      "detail": "HTTP 201",
+      "duration_ms": 2192.9941177368164
+    },
+    {
+      "scenario": "C-5",
+      "name": "Booking works after RabbitMQ recovery (reconnect ok)",
+      "passed": false,
+      "detail": "HTTP timeout",
+      "duration_ms": 318.1161880493164
+    },
+    {
+      "scenario": "C-6",
+      "name": "Existing JWT accepted without auth_service running",
+      "passed": true,
+      "detail": "HTTP 200 in 238ms",
+      "duration_ms": 237.60390281677246
+    },
+    {
+      "scenario": "C-6",
+      "name": "New login fails when auth_service is down",
+      "passed": false,
+      "detail": "token=got token (unexpected)",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-6",
+      "name": "auth_service recovered",
+      "passed": false,
+      "detail": "took ~-1s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-6",
+      "name": "New login works after auth_service recovery",
+      "passed": true,
+      "detail": "",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-7",
+      "name": "Booking fails (500/503) when PostgreSQL is down",
+      "passed": false,
+      "detail": "HTTP 201 (expected 5xx)",
+      "duration_ms": 431.6549301147461
+    },
+    {
+      "scenario": "C-7",
+      "name": "Admin health reports degraded services with DB down",
+      "passed": false,
+      "detail": "0 degraded: []",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-7",
+      "name": "journey_booking recovered after DB restart",
+      "passed": true,
+      "detail": "took ~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-7",
+      "name": "Booking succeeds after PostgreSQL recovery",
+      "passed": false,
+      "detail": "HTTP timeout",
+      "duration_ms": 437.0419979095459
+    },
+    {
+      "scenario": "C-8",
+      "name": "EU VM stop (skipped by flag)",
+      "passed": true,
+      "detail": "use --no-vm-stop=false to enable",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-9",
+      "name": "Booking still CONFIRMED with routing+conflict both down",
+      "passed": false,
+      "detail": "HTTP timeout in 357ms",
+      "duration_ms": 356.81700706481934
+    },
+    {
+      "scenario": "C-9",
+      "name": "nginx LB health still responds with 2 services down",
+      "passed": true,
+      "detail": "HTTP 200",
+      "duration_ms": 40.2219295501709
+    },
+    {
+      "scenario": "C-9",
+      "name": "road_routing recovered",
+      "passed": true,
+      "detail": "~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-9",
+      "name": "conflict_detection recovered",
+      "passed": true,
+      "detail": "~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-10",
+      "name": "auth healthy after restart",
+      "passed": false,
+      "detail": "~-1s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-10",
+      "name": "Booking works while journey restarts",
+      "passed": true,
+      "detail": "HTTP timeout",
+      "duration_ms": 467.2880172729492
+    },
+    {
+      "scenario": "C-10",
+      "name": "journey healthy after restart",
+      "passed": true,
+      "detail": "~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-10",
+      "name": "Booking works while conflict restarts",
+      "passed": true,
+      "detail": "HTTP 201",
+      "duration_ms": 446.5479850769043
+    },
+    {
+      "scenario": "C-10",
+      "name": "conflict healthy after restart",
+      "passed": true,
+      "detail": "~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-10",
+      "name": "Booking works while notify restarts",
+      "passed": true,
+      "detail": "HTTP timeout",
+      "duration_ms": 437.27588653564453
+    },
+    {
+      "scenario": "C-10",
+      "name": "notify healthy after restart",
+      "passed": true,
+      "detail": "~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-10",
+      "name": "Booking works while routing restarts",
+      "passed": true,
+      "detail": "HTTP timeout",
+      "duration_ms": 389.5390033721924
+    },
+    {
+      "scenario": "C-10",
+      "name": "routing healthy after restart",
+      "passed": true,
+      "detail": "~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-10",
+      "name": "Booking works while authority restarts",
+      "passed": true,
+      "detail": "HTTP timeout",
+      "duration_ms": 315.0191307067871
+    },
+    {
+      "scenario": "C-10",
+      "name": "authority healthy after restart",
+      "passed": true,
+      "detail": "~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-10",
+      "name": "Booking works while admin restarts",
+      "passed": true,
+      "detail": "HTTP timeout",
+      "duration_ms": 352.48494148254395
+    },
+    {
+      "scenario": "C-10",
+      "name": "admin healthy after restart",
+      "passed": true,
+      "detail": "~0s",
+      "duration_ms": null
+    },
+    {
+      "scenario": "C-10",
+      "name": "System survived rolling restart of all 7 services",
+      "passed": true,
+      "detail": "failures during restart: none",
+      "duration_ms": null
+    }
+  ]
+}

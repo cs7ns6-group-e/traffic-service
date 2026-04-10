@@ -4,6 +4,8 @@ __pycache__/
 *.pyo
 .DS_Store
 *.log
+*.png
+
 
 # Frontend build artifacts
 node_modules/
