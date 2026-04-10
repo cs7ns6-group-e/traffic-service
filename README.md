@@ -70,7 +70,7 @@ Three identical stacks deployed independently across GCP regions. RabbitMQ feder
 | Region | Load Balancer | Location |
 |--------|--------------|----------|
 | EU | `http://35.240.110.205` | europe-west1 (Belgium) |
-| US | `http://34.26.94.36` | us-central1 (Iowa) |
+| US | `http://136.111.143.185` | us-central1 (Iowa) |
 | APAC | `http://34.126.131.195` | asia-southeast1 (Singapore) |
 
 The frontend auto-detects your region from the journey origin/destination text — Dublin routes EU, New York routes US, Singapore routes APAC.
