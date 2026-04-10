@@ -482,7 +482,7 @@ brew install k6  # macOS
 # Booking load test (hits all 3 regions randomly)
 k6 run loadtest/booking_test.js \
   -e EU_LB=http://35.240.110.205 \
-  -e US_LB=http://34.26.94.36 \
+  -e US_LB=http://136.111.143.185/ \
   -e APAC_LB=http://34.126.131.195
 
 # Health endpoint test
